@@ -1028,7 +1028,6 @@ export default function QuizApp() {
       {s.toast && <div className={`toast toast-${s.toast.t}`}>{s.toast.m}</div>}
     </div>
   );
-}
 
 // ─── User Row Component ───
 function UserRow({ u, me, onStatus, onToggleAdmin, onDelete, onResetPw }) {
