@@ -383,7 +383,7 @@ export default function QuizApp() {
       if (qs.length === 0) return toast("No valid questions", "e");
       await supabase.from("questions").insert(qs);
       setBulk(""); loadGroups(); toast(`${qs.length} questions imported!`);
-    } catch { toast("Import failed", "e"); }
+    } catch (err) { toast("Import failed", "e"); }
   };
 
   // ─── Excel Import ───
@@ -1079,4 +1079,3 @@ function UserRow({ u, me, onStatus, onToggleAdmin, onDelete, onResetPw }) {
     </div>
   );
 }
-// build fix 
