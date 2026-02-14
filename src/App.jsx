@@ -38,6 +38,8 @@ const I = {
   User: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   Shuf: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>,
   Key: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
+  File: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
+  Download: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
 };
 
 // ─── Styles ───
@@ -382,6 +384,115 @@ export default function QuizApp() {
       await supabase.from("questions").insert(qs);
       setBulk(""); loadGroups(); toast(`${qs.length} questions imported!`);
     } catch { toast("Import failed", "e"); }
+  };
+
+  // ─── Excel Import ───
+  const fileInputRef = useRef(null);
+  const [importing, setImporting] = useState(false);
+  const [previewRows, setPreviewRows] = useState(null);
+  const [importGroupId, setImportGroupId] = useState(null);
+
+  const handleExcelUpload = async (e, gid) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setImporting(true);
+    setImportGroupId(gid);
+
+    try {
+      const XLSX = await import("https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs");
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      if (rows.length === 0) { setImporting(false); return toast("Empty file", "e"); }
+
+      // Normalize headers (case-insensitive, trimmed)
+      const normalize = (row) => {
+        const n = {};
+        Object.keys(row).forEach(k => { n[k.trim().toLowerCase()] = String(row[k]).trim(); });
+        return n;
+      };
+
+      const parsed = [];
+      for (const raw of rows) {
+        const r = normalize(raw);
+        // Try to find question text
+        const text = r["question"] || r["q"] || r["text"] || Object.values(r)[0];
+        if (!text || !text.trim()) continue;
+
+        // Try to find options
+        const optA = r["option a"] || r["a"] || r["optiona"] || r["option_a"] || Object.values(r)[1] || "";
+        const optB = r["option b"] || r["b"] || r["optionb"] || r["option_b"] || Object.values(r)[2] || "";
+        const optC = r["option c"] || r["c"] || r["optionc"] || r["option_c"] || Object.values(r)[3] || "";
+        const optD = r["option d"] || r["d"] || r["optiond"] || r["option_d"] || Object.values(r)[4] || "";
+
+        if (!optA && !optB && !optC && !optD) continue;
+
+        // Try to find correct answer
+        const correctRaw = (r["correct"] || r["answer"] || r["correct answer"] || r["correct_answer"] || r["ans"] || "A").toUpperCase().trim();
+        let correct = 0;
+        if (correctRaw === "A" || correctRaw === "1") correct = 0;
+        else if (correctRaw === "B" || correctRaw === "2") correct = 1;
+        else if (correctRaw === "C" || correctRaw === "3") correct = 2;
+        else if (correctRaw === "D" || correctRaw === "4") correct = 3;
+        else {
+          // Check if the value matches one of the options
+          if (correctRaw === optB.toUpperCase()) correct = 1;
+          else if (correctRaw === optC.toUpperCase()) correct = 2;
+          else if (correctRaw === optD.toUpperCase()) correct = 3;
+        }
+
+        const explanation = r["explanation"] || r["explain"] || r["note"] || r["notes"] || "";
+
+        parsed.push({
+          text: text.trim(),
+          options: [optA, optB, optC, optD],
+          correct,
+          explanation,
+        });
+      }
+
+      if (parsed.length === 0) { setImporting(false); return toast("No valid questions found. Check column headers.", "e"); }
+
+      setPreviewRows(parsed);
+      set({ modal: { type: "excel-preview", gid } });
+      setImporting(false);
+    } catch (err) {
+      console.error(err);
+      setImporting(false);
+      toast("Error reading file. Make sure it's a valid .xlsx file.", "e");
+    }
+  };
+
+  const confirmExcelImport = async (gid) => {
+    if (!previewRows || previewRows.length === 0) return;
+    const toInsert = previewRows.map(q => ({
+      group_id: gid, text: q.text, options: q.options, correct: q.correct, explanation: q.explanation
+    }));
+    // Supabase has a limit, insert in batches of 50
+    for (let i = 0; i < toInsert.length; i += 50) {
+      await supabase.from("questions").insert(toInsert.slice(i, i + 50));
+    }
+    loadGroups();
+    toast(`${previewRows.length} questions imported!`);
+    setPreviewRows(null);
+    set({ modal: null });
+  };
+
+  const downloadTemplate = () => {
+    // Create a simple CSV template (opens in Excel)
+    const headers = "Question,Option A,Option B,Option C,Option D,Correct,Explanation";
+    const example1 = "What is the capital of France?,London,Paris,Berlin,Madrid,B,Paris has been the capital since the 10th century";
+    const example2 = "Which planet is closest to the Sun?,Venus,Mercury,Earth,Mars,B,Mercury orbits closest to the Sun";
+    const csv = [headers, example1, example2].join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "quiz_template.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
   };
 
   // ─── Question Stats ───
@@ -804,14 +915,34 @@ export default function QuizApp() {
                   <div className="ig"><label className="lbl">Explanation (optional)</label><textarea className="ta" placeholder="Why..." value={qf.explanation} onChange={e=>setQf(f=>({...f,explanation:e.target.value}))}/></div>
                   <button className="b bp" onClick={()=>addQ(g.id)}><I.Plus/> Add Question</button>
                 </div>
+                <div className="c" style={{marginBottom:24}}>
+                  <div style={{fontSize:16,fontWeight:600,marginBottom:8,display:"flex",alignItems:"center",gap:8}}><I.File/> Import from Excel</div>
+                  <p style={{fontSize:13,color:"var(--t2)",marginBottom:20,lineHeight:1.6}}>
+                    Upload an Excel (.xlsx) or CSV file with your questions. The file should have these columns:
+                    <strong style={{color:"var(--t1)",display:"block",marginTop:8}}>Question | Option A | Option B | Option C | Option D | Correct | Explanation</strong>
+                  </p>
+                  <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:16}}>
+                    <input type="file" ref={fileInputRef} accept=".xlsx,.xls,.csv" style={{display:"none"}}
+                      onChange={(e)=>handleExcelUpload(e, g.id)} />
+                    <button className="b bp" onClick={()=>fileInputRef.current?.click()} disabled={importing}>
+                      {importing ? "Reading file..." : <><I.Upload/> Upload Excel / CSV</>}
+                    </button>
+                    <button className="b bs" onClick={downloadTemplate}><I.Download/> Download Template</button>
+                  </div>
+                  <div style={{padding:16,borderRadius:"var(--rs)",background:"var(--bg2)",border:"1px solid var(--bd)",fontSize:13,color:"var(--t3)",lineHeight:1.6}}>
+                    <strong style={{color:"var(--t2)",display:"block",marginBottom:4}}>Tips:</strong>
+                    The "Correct" column should be A, B, C, or D. The "Explanation" column is optional.
+                    Column headers are flexible — "Question", "Q", or "Text" all work. Same for options: "Option A", "A", etc.
+                  </div>
+                </div>
                 <div className="c">
-                  <div style={{fontSize:16,fontWeight:600,marginBottom:8}}>Bulk Import</div>
+                  <div style={{fontSize:16,fontWeight:600,marginBottom:8}}>Text Import</div>
                   <p style={{fontSize:13,color:"var(--t2)",marginBottom:16,lineHeight:1.5}}>
-                    7 lines per question: Question → A. Option → B. Option → C. Option → D. Option → Answer letter → Explanation
+                    Or paste questions as text (7 lines each): Question → A. Option → B. Option → C. Option → D. Option → Answer letter → Explanation
                   </p>
                   <textarea className="ta" style={{minHeight:140}} value={bulk} onChange={e=>setBulk(e.target.value)}
                     placeholder={"What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6\nB\nTwo plus two equals four."}/>
-                  <button className="b bp" style={{marginTop:12}} onClick={()=>importBulk(g.id)}><I.Upload/> Import</button>
+                  <button className="b bp" style={{marginTop:12}} onClick={()=>importBulk(g.id)}><I.Upload/> Import Text</button>
                 </div>
               </div>
             );
@@ -860,6 +991,35 @@ export default function QuizApp() {
           <div className="ma">
             <button className="b" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}>Cancel</button>
             <button className="b bp" onClick={()=>{updQ(s.editQ,{text:qf.text,options:qf.options,correct:qf.correct,explanation:qf.explanation});set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}>Save</button>
+          </div>
+        </div></div>
+      )}
+
+      {s.modal?.type === "excel-preview" && previewRows && (
+        <div className="mo" onClick={()=>{setPreviewRows(null);set({modal:null});}}><div className="md" onClick={e=>e.stopPropagation()} style={{maxWidth:700}}>
+          <div className="mt">Import Preview — {previewRows.length} Questions Found</div>
+          <div style={{maxHeight:400,overflowY:"auto",marginBottom:16}}>
+            {previewRows.map((q,i) => (
+              <div key={i} style={{padding:12,borderRadius:"var(--rs)",background:"var(--bg2)",border:"1px solid var(--bd)",marginBottom:8,fontSize:13}}>
+                <div style={{fontWeight:600,marginBottom:6}}>Q{i+1}: {q.text}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+                  {q.options.map((o,oi) => (
+                    <div key={oi} style={{padding:"4px 8px",borderRadius:4,background:oi===q.correct?"var(--oks)":"transparent",
+                      color:oi===q.correct?"var(--ok)":"var(--t2)",fontWeight:oi===q.correct?600:400}}>
+                      {letters[oi]}. {o}
+                    </div>
+                  ))}
+                </div>
+                {q.explanation && <div style={{marginTop:4,fontSize:12,color:"var(--t3)",fontStyle:"italic"}}>{q.explanation}</div>}
+              </div>
+            ))}
+          </div>
+          <p style={{fontSize:13,color:"var(--t2)",marginBottom:8}}>
+            Please review the questions above. Correct answers are highlighted in green.
+          </p>
+          <div className="ma">
+            <button className="b" onClick={()=>{setPreviewRows(null);set({modal:null});}}>Cancel</button>
+            <button className="b bp" onClick={()=>confirmExcelImport(s.modal.gid)}>Import {previewRows.length} Questions</button>
           </div>
         </div></div>
       )}
