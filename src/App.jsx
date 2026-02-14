@@ -1,61 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "./supabaseClient";
 
-// ─── Storage Helper ───
-const DB = {
-  get: async (key) => {
-    try { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : null; }
-    catch { return null; }
-  },
-  set: async (key, val) => {
-    try { await window.storage.set(key, JSON.stringify(val)); return true; }
-    catch { return false; }
-  },
-  del: async (key) => {
-    try { await window.storage.delete(key); return true; }
-    catch { return false; }
-  },
-  list: async (prefix) => {
-    try { const r = await window.storage.list(prefix); return r?.keys || []; }
-    catch { return []; }
-  }
-};
-
-// ─── Default Data ───
-const DEFAULT_GROUPS = [
-  {
-    id: "g1", name: "General Knowledge", description: "Test your knowledge of the world around you", icon: "🌍",
-    questions: [
-      { id: "q1", text: "What is the capital of France?", options: ["London", "Paris", "Berlin", "Madrid"], correct: 1, explanation: "Paris has been the capital of France since the 10th century." },
-      { id: "q2", text: "Which planet is known as the Red Planet?", options: ["Venus", "Jupiter", "Mars", "Saturn"], correct: 2, explanation: "Mars appears red due to iron oxide (rust) on its surface." },
-      { id: "q3", text: "What is the largest ocean on Earth?", options: ["Atlantic", "Indian", "Arctic", "Pacific"], correct: 3, explanation: "The Pacific Ocean covers about 63 million square miles." },
-      { id: "q4", text: "Who painted the Mona Lisa?", options: ["Michelangelo", "Raphael", "Leonardo da Vinci", "Donatello"], correct: 2, explanation: "Leonardo da Vinci painted the Mona Lisa between 1503 and 1519." },
-      { id: "q5", text: "What is the chemical symbol for Gold?", options: ["Go", "Gd", "Au", "Ag"], correct: 2, explanation: "Au comes from the Latin word 'Aurum' meaning gold." },
-    ]
-  },
-  {
-    id: "g2", name: "Science & Nature", description: "Explore the wonders of science and the natural world", icon: "🔬",
-    questions: [
-      { id: "q6", text: "What gas do plants absorb from the atmosphere?", options: ["Oxygen", "Nitrogen", "Carbon Dioxide", "Hydrogen"], correct: 2, explanation: "Plants absorb CO₂ during photosynthesis to produce glucose and oxygen." },
-      { id: "q7", text: "What is the hardest natural substance on Earth?", options: ["Platinum", "Diamond", "Titanium", "Quartz"], correct: 1, explanation: "Diamond scores 10 on the Mohs hardness scale." },
-      { id: "q8", text: "How many bones are in the adult human body?", options: ["186", "206", "226", "256"], correct: 1, explanation: "Adults have 206 bones. Babies are born with about 270 that fuse over time." },
-      { id: "q9", text: "What is the speed of light approximately?", options: ["200,000 km/s", "300,000 km/s", "400,000 km/s", "150,000 km/s"], correct: 1, explanation: "Light travels at approximately 299,792 km/s in a vacuum." },
-      { id: "q10", text: "Which element has the atomic number 1?", options: ["Helium", "Hydrogen", "Lithium", "Carbon"], correct: 1, explanation: "Hydrogen is the lightest and most abundant element in the universe." },
-    ]
-  },
-  {
-    id: "g3", name: "History", description: "Journey through the events that shaped our world", icon: "📜",
-    questions: [
-      { id: "q11", text: "In which year did World War II end?", options: ["1943", "1944", "1945", "1946"], correct: 2, explanation: "WWII ended in 1945 with the surrender of Japan on September 2." },
-      { id: "q12", text: "Who was the first President of the United States?", options: ["Thomas Jefferson", "George Washington", "John Adams", "Benjamin Franklin"], correct: 1, explanation: "George Washington served as the first President from 1789 to 1797." },
-      { id: "q13", text: "The Great Wall of China was primarily built to protect against invasions from which group?", options: ["Japanese", "Mongolians", "Koreans", "Indians"], correct: 1, explanation: "The Great Wall was built primarily to protect against Mongol invasions." },
-      { id: "q14", text: "Which ancient civilization built the pyramids at Giza?", options: ["Romans", "Greeks", "Egyptians", "Persians"], correct: 2, explanation: "The Giza pyramids were built by ancient Egyptians around 2560 BC." },
-      { id: "q15", text: "What year did the Titanic sink?", options: ["1910", "1912", "1914", "1916"], correct: 1, explanation: "The RMS Titanic sank on April 15, 1912, after hitting an iceberg." },
-    ]
-  }
-];
-
-const genId = () => Math.random().toString(36).substring(2, 10);
-const clamp = (n, min, max) => Math.min(Math.max(n, min), max);
+// ─── Utilities ───
 const shuffle = (arr) => {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -64,13 +10,19 @@ const shuffle = (arr) => {
   }
   return a;
 };
+const genToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, "0")).join("");
+const hashPw = async (pw) => {
+  const enc = new TextEncoder().encode(pw);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+};
 
 // ─── Icons ───
-const Icons = {
-  Flag: ({ filled }) => <svg width="20" height="20" viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>,
-  Check: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>,
-  X: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>,
-  Arrow: ({ dir }) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{dir === "left" ? <><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></> : <><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>}</svg>,
+const I = {
+  Flag: ({ filled }) => <svg width="20" height="20" viewBox="0 0 24 24" fill={filled?"currentColor":"none"} stroke="currentColor" strokeWidth="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>,
+  Check: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>,
+  X: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  Arr: ({d}) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">{d==="l"?<><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>:<><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>}</svg>,
   Plus: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
   Trash: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>,
   Edit: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
@@ -78,895 +30,594 @@ const Icons = {
   Chart: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
   Gear: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
   Upload: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
-  Users: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>,
   Sun: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>,
   Moon: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>,
-  Clock: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   Shield: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
   Ban: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>,
-  CheckCircle: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+  CheckC: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
   User: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
-  Shuffle: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>,
+  Shuf: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>,
+  Key: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
 };
 
 // ─── Styles ───
-const getStyles = (theme) => `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,800&display=swap');
-  
-  :root {
-    --bg-deep: ${theme === "dark" ? "#0a0a0f" : "#f5f5f8"};
-    --bg-card: ${theme === "dark" ? "#12121a" : "#ffffff"};
-    --bg-elevated: ${theme === "dark" ? "#1a1a26" : "#eeeef2"};
-    --bg-hover: ${theme === "dark" ? "#222233" : "#e4e4ec"};
-    --border: ${theme === "dark" ? "#2a2a3d" : "#d8d8e4"};
-    --border-light: ${theme === "dark" ? "#3a3a55" : "#c0c0d0"};
-    --text-primary: ${theme === "dark" ? "#e8e6f0" : "#1a1a2e"};
-    --text-secondary: ${theme === "dark" ? "#9896a8" : "#5a5870"};
-    --text-muted: ${theme === "dark" ? "#6a6880" : "#8888a0"};
-    --accent: #7c6ef0;
-    --accent-hover: #9488f5;
-    --accent-glow: rgba(124,110,240,0.15);
-    --accent-soft: ${theme === "dark" ? "rgba(124,110,240,0.08)" : "rgba(124,110,240,0.06)"};
-    --success: #34d399;
-    --success-soft: ${theme === "dark" ? "rgba(52,211,153,0.1)" : "rgba(52,211,153,0.08)"};
-    --error: #f87171;
-    --error-soft: ${theme === "dark" ? "rgba(248,113,113,0.1)" : "rgba(248,113,113,0.08)"};
-    --warning: #fbbf24;
-    --warning-soft: ${theme === "dark" ? "rgba(251,191,36,0.1)" : "rgba(251,191,36,0.08)"};
-    --flag: #f59e0b;
-    --radius: 12px;
-    --radius-sm: 8px;
-    --radius-lg: 16px;
-    --shadow: ${theme === "dark" ? "0 4px 24px rgba(0,0,0,0.3)" : "0 4px 24px rgba(0,0,0,0.06)"};
-    --shadow-lg: ${theme === "dark" ? "0 8px 40px rgba(0,0,0,0.4)" : "0 8px 40px rgba(0,0,0,0.1)"};
-    --font-display: 'Fraunces', serif;
-    --font-body: 'DM Sans', sans-serif;
-    --transition: 0.2s cubic-bezier(0.4,0,0.2,1);
-  }
-
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family: var(--font-body);
-    background: var(--bg-deep);
-    color: var(--text-primary);
-    min-height: 100vh;
-    -webkit-font-smoothing: antialiased;
-    transition: background 0.3s, color 0.3s;
-  }
-  .app-container { min-height: 100vh; display: flex; flex-direction: column; }
-  .noise-bg::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    opacity: ${theme === "dark" ? "0.03" : "0.015"};
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    pointer-events: none; z-index: 0;
-  }
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-  .nav {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 32px; border-bottom: 1px solid var(--border);
-    background: ${theme === "dark" ? "rgba(10,10,15,0.8)" : "rgba(245,245,248,0.85)"};
-    backdrop-filter: blur(20px); position: sticky; top: 0; z-index: 100;
-  }
-  .nav-logo {
-    font-family: var(--font-display); font-size: 22px; font-weight: 700;
-    background: linear-gradient(135deg, var(--accent), #a78bfa);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    cursor: pointer; letter-spacing: -0.5px;
-  }
-  .nav-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-
-  .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 20px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--bg-elevated);
-    color: var(--text-primary); font-family: var(--font-body);
-    font-size: 14px; font-weight: 500; cursor: pointer;
-    transition: all var(--transition); white-space: nowrap;
-  }
-  .btn:hover { background: var(--bg-hover); border-color: var(--border-light); }
-  .btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
-  .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-  .btn-ghost { background: transparent; border-color: transparent; }
-  .btn-ghost:hover { background: var(--bg-elevated); }
-  .btn-danger { color: var(--error); }
-  .btn-danger:hover { background: var(--error-soft); border-color: var(--error); }
-  .btn-success { color: var(--success); }
-  .btn-success:hover { background: var(--success-soft); border-color: var(--success); }
-  .btn-sm { padding: 6px 14px; font-size: 13px; }
-  .btn-icon { padding: 8px; width: 36px; height: 36px; justify-content: center; }
-
-  .input, .textarea, .select {
-    width: 100%; padding: 10px 14px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--bg-deep);
-    color: var(--text-primary); font-family: var(--font-body);
-    font-size: 14px; transition: border-color var(--transition); outline: none;
-  }
-  .input:focus, .textarea:focus, .select:focus { border-color: var(--accent); }
-  .textarea { resize: vertical; min-height: 80px; }
-  .input-label {
-    display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary);
-    text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px;
-  }
-  .input-group { margin-bottom: 16px; }
-
-  .card {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius-lg); padding: 28px; transition: all var(--transition);
-  }
-  .card-hover:hover {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent), var(--shadow);
-    transform: translateY(-2px);
-  }
-
-  .page {
-    max-width: 960px; margin: 0 auto; padding: 40px 24px;
-    width: 100%; position: relative; z-index: 1; animation: fadeIn 0.3s ease;
-  }
-  .page-wide { max-width: 1100px; }
-
-  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes slideUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-  @keyframes scaleIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
-  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.6; } }
-
-  .section-title { font-family: var(--font-display); font-size: 32px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 8px; }
-  .section-subtitle { color: var(--text-secondary); font-size: 15px; margin-bottom: 32px; line-height: 1.5; }
-
-  .group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
-  .group-card { cursor: pointer; position: relative; overflow: hidden; }
-  .group-card::after {
-    content: ''; position: absolute; inset: 0;
-    background: linear-gradient(135deg, var(--accent-soft), transparent);
-    opacity: 0; transition: opacity var(--transition); border-radius: var(--radius-lg); pointer-events: none;
-  }
-  .group-card:hover::after { opacity: 1; }
-  .group-icon { font-size: 36px; margin-bottom: 16px; display: block; }
-  .group-name { font-family: var(--font-display); font-size: 20px; font-weight: 600; margin-bottom: 6px; }
-  .group-desc { color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
-  .group-meta { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500; }
-
-  .quiz-progress-bar { width: 100%; height: 4px; background: var(--bg-elevated); border-radius: 2px; overflow: hidden; margin-bottom: 32px; }
-  .quiz-progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #a78bfa); border-radius: 2px; transition: width 0.4s cubic-bezier(0.4,0,0.2,1); }
-  .quiz-counter { font-size: 13px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 1px; }
-  .quiz-question { font-family: var(--font-display); font-size: 26px; font-weight: 600; line-height: 1.4; margin-bottom: 32px; letter-spacing: -0.3px; }
-
-  .option-btn {
-    display: flex; align-items: center; gap: 16px; width: 100%;
-    padding: 18px 22px; border-radius: var(--radius);
-    border: 1px solid var(--border); background: var(--bg-card);
-    color: var(--text-primary); font-family: var(--font-body);
-    font-size: 15px; cursor: pointer; transition: all var(--transition);
-    text-align: left; margin-bottom: 12px; position: relative; overflow: hidden;
-  }
-  .option-btn:hover:not(.option-disabled) { border-color: var(--accent); background: var(--accent-soft); }
-  .option-letter {
-    width: 32px; height: 32px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 600; font-size: 13px; background: var(--bg-elevated);
-    border: 1px solid var(--border); flex-shrink: 0; transition: all var(--transition);
-  }
-  .option-correct { border-color: var(--success) !important; background: var(--success-soft) !important; }
-  .option-correct .option-letter { background: var(--success); border-color: var(--success); color: white; }
-  .option-wrong { border-color: var(--error) !important; background: var(--error-soft) !important; }
-  .option-wrong .option-letter { background: var(--error); border-color: var(--error); color: white; }
-  .option-disabled { cursor: default; }
-
-  .explanation-box {
-    margin-top: 20px; padding: 16px 20px; border-radius: var(--radius);
-    background: var(--accent-soft); border: 1px solid rgba(124,110,240,0.2);
-    font-size: 14px; line-height: 1.6; color: var(--text-secondary); animation: slideUp 0.3s ease;
-  }
-  .explanation-box strong { color: var(--accent); display: block; margin-bottom: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
-
-  .quiz-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 32px; gap: 12px; }
-  .flag-btn { color: var(--text-muted); transition: color var(--transition); }
-  .flag-btn.flagged { color: var(--flag); }
-
-  .results-hero { text-align: center; padding: 48px 24px; margin-bottom: 32px; }
-  .results-score {
-    font-family: var(--font-display); font-size: 72px; font-weight: 800;
-    background: linear-gradient(135deg, var(--accent), var(--success));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    line-height: 1; margin-bottom: 8px;
-  }
-  .results-label { font-size: 16px; color: var(--text-secondary); margin-bottom: 32px; }
-  .results-stats { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-bottom: 32px; }
-  .stat-chip {
-    padding: 10px 20px; border-radius: var(--radius);
-    background: var(--bg-elevated); border: 1px solid var(--border);
-    font-size: 14px; font-weight: 500;
-  }
-  .stat-chip .stat-num { font-weight: 700; margin-right: 4px; }
-
-  .wrong-item {
-    padding: 20px; border-radius: var(--radius);
-    background: var(--bg-card); border: 1px solid var(--border);
-    margin-bottom: 12px; animation: slideUp 0.3s ease;
-  }
-  .wrong-item-q { font-weight: 600; margin-bottom: 8px; font-size: 15px; }
-  .wrong-item-detail { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-  .wrong-item-detail .wrong-answer { color: var(--error); font-weight: 600; }
-  .wrong-item-detail .right-answer { color: var(--success); font-weight: 600; }
-
-  .admin-group-item {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px; border-radius: var(--radius);
-    background: var(--bg-card); border: 1px solid var(--border);
-    margin-bottom: 8px; gap: 12px;
-  }
-  .admin-group-item:hover { border-color: var(--border-light); }
-  .admin-q-item {
-    padding: 14px 18px; border-radius: var(--radius-sm);
-    background: var(--bg-elevated); border: 1px solid var(--border);
-    margin-bottom: 6px; font-size: 14px; display: flex;
-    justify-content: space-between; align-items: center; gap: 12px;
-  }
-  .admin-q-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
-    backdrop-filter: blur(4px); display: flex; align-items: center;
-    justify-content: center; z-index: 200; padding: 24px; animation: fadeIn 0.2s ease;
-  }
-  .modal {
-    background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius-lg); padding: 32px; max-width: 560px;
-    width: 100%; max-height: 90vh; overflow-y: auto; animation: scaleIn 0.2s ease;
-    box-shadow: var(--shadow-lg);
-  }
-  .modal-title { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 24px; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 24px; }
-
-  .login-page { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; }
-  .login-card { max-width: 400px; width: 100%; text-align: center; }
-  .login-card .group-icon { font-size: 48px; margin-bottom: 24px; }
-
-  .history-item {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px; background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius); margin-bottom: 8px;
-  }
-
-  .badge {
-    display: inline-flex; align-items: center; padding: 3px 10px;
-    border-radius: 20px; font-size: 11px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.5px;
-  }
-  .badge-success { background: var(--success-soft); color: var(--success); }
-  .badge-error { background: var(--error-soft); color: var(--error); }
-  .badge-warning { background: var(--warning-soft); color: var(--warning); }
-  .badge-accent { background: var(--accent-soft); color: var(--accent); }
-
-  .tabs {
-    display: flex; gap: 4px; background: var(--bg-elevated);
-    padding: 4px; border-radius: var(--radius); margin-bottom: 24px;
-  }
-  .tab {
-    flex: 1; padding: 10px 16px; border-radius: var(--radius-sm);
-    border: none; background: transparent; color: var(--text-secondary);
-    font-family: var(--font-body); font-size: 14px; font-weight: 500;
-    cursor: pointer; transition: all var(--transition);
-  }
-  .tab.active { background: var(--bg-card); color: var(--text-primary); box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
-
-  .toast {
-    position: fixed; bottom: 24px; right: 24px;
-    padding: 14px 22px; background: var(--bg-elevated);
-    border: 1px solid var(--border); border-radius: var(--radius);
-    font-size: 14px; z-index: 300; animation: slideUp 0.3s ease; box-shadow: var(--shadow);
-  }
-  .toast-success { border-color: var(--success); }
-  .toast-error { border-color: var(--error); }
-
-  .q-dots { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 24px; justify-content: center; }
-  .q-dot {
-    width: 28px; height: 28px; border-radius: 50%;
-    border: 2px solid var(--border); background: var(--bg-elevated);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 600; cursor: pointer;
-    transition: all var(--transition); color: var(--text-muted);
-  }
-  .q-dot.current { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-  .q-dot.answered-correct { border-color: var(--success); background: var(--success-soft); color: var(--success); }
-  .q-dot.answered-wrong { border-color: var(--error); background: var(--error-soft); color: var(--error); }
-  .q-dot.flagged-dot { box-shadow: 0 0 0 2px var(--flag); }
-
-  /* User management table */
-  .user-row {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px; background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: var(--radius); margin-bottom: 8px; gap: 12px; flex-wrap: wrap;
-  }
-  .user-info { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 200px; }
-  .user-avatar {
-    width: 40px; height: 40px; border-radius: 50%;
-    background: var(--accent-soft); display: flex; align-items: center;
-    justify-content: center; color: var(--accent); font-weight: 700; font-size: 16px;
-    flex-shrink: 0;
-  }
-  .user-stats {
-    display: flex; gap: 16px; font-size: 12px; color: var(--text-muted);
-    flex-wrap: wrap;
-  }
-  .user-actions { display: flex; gap: 4px; }
-
-  /* Pending banner */
-  .pending-page {
-    display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 24px; text-align: center;
-  }
-  .pending-card { max-width: 440px; width: 100%; }
-  .pending-icon { font-size: 64px; margin-bottom: 24px; display: block; animation: pulse 2s infinite; }
-
-  /* Notification dot */
-  .notif-dot {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--error);
-    position: absolute; top: -2px; right: -2px;
-  }
-
-  @media (max-width: 640px) {
-    .nav { padding: 12px 16px; }
-    .nav-logo { font-size: 18px; }
-    .nav-actions { gap: 4px; }
-    .page { padding: 24px 16px; }
-    .section-title { font-size: 24px; }
-    .quiz-question { font-size: 20px; }
-    .results-score { font-size: 56px; }
-    .group-grid { grid-template-columns: 1fr; }
-    .modal { padding: 24px; }
-    .user-row { flex-direction: column; align-items: flex-start; }
-  }
+const mkStyles = (t) => `
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,800&display=swap');
+:root{
+--bg0:${t==="dark"?"#0a0a0f":"#f5f5f8"};--bg1:${t==="dark"?"#12121a":"#fff"};--bg2:${t==="dark"?"#1a1a26":"#eeeef2"};
+--bg3:${t==="dark"?"#222233":"#e4e4ec"};--bd:${t==="dark"?"#2a2a3d":"#d8d8e4"};--bd2:${t==="dark"?"#3a3a55":"#c0c0d0"};
+--t1:${t==="dark"?"#e8e6f0":"#1a1a2e"};--t2:${t==="dark"?"#9896a8":"#5a5870"};--t3:${t==="dark"?"#6a6880":"#8888a0"};
+--ac:#7c6ef0;--ac2:#9488f5;--acs:${t==="dark"?"rgba(124,110,240,0.08)":"rgba(124,110,240,0.06)"};
+--ok:#34d399;--oks:${t==="dark"?"rgba(52,211,153,0.1)":"rgba(52,211,153,0.08)"};
+--err:#f87171;--errs:${t==="dark"?"rgba(248,113,113,0.1)":"rgba(248,113,113,0.08)"};
+--wrn:#fbbf24;--wrns:${t==="dark"?"rgba(251,191,36,0.1)":"rgba(251,191,36,0.08)"};
+--r:12px;--rs:8px;--rl:16px;
+--sh:${t==="dark"?"0 4px 24px rgba(0,0,0,0.3)":"0 4px 24px rgba(0,0,0,0.06)"};
+--fd:'Fraunces',serif;--fb:'DM Sans',sans-serif;--tr:0.2s cubic-bezier(0.4,0,0.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--fb);background:var(--bg0);color:var(--t1);min-height:100vh;-webkit-font-smoothing:antialiased;transition:background .3s,color .3s}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--bd);border-radius:3px}
+.app{min-height:100vh;display:flex;flex-direction:column}
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid var(--bd);background:${t==="dark"?"rgba(10,10,15,0.8)":"rgba(245,245,248,0.85)"};backdrop-filter:blur(20px);position:sticky;top:0;z-index:100}
+.logo{font-family:var(--fd);font-size:22px;font-weight:700;background:linear-gradient(135deg,var(--ac),#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;cursor:pointer;letter-spacing:-0.5px}
+.nav-r{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.b{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:var(--rs);border:1px solid var(--bd);background:var(--bg2);color:var(--t1);font-family:var(--fb);font-size:14px;font-weight:500;cursor:pointer;transition:all var(--tr);white-space:nowrap}
+.b:hover{background:var(--bg3);border-color:var(--bd2)}.bp{background:var(--ac);border-color:var(--ac);color:#fff}.bp:hover{background:var(--ac2);border-color:var(--ac2)}
+.bg{background:transparent;border-color:transparent}.bg:hover{background:var(--bg2)}.bd{color:var(--err)}.bd:hover{background:var(--errs);border-color:var(--err)}
+.bk{color:var(--ok)}.bk:hover{background:var(--oks);border-color:var(--ok)}.bs{padding:6px 14px;font-size:13px}.bi{padding:8px;width:36px;height:36px;justify-content:center}
+.inp,.ta{width:100%;padding:10px 14px;border-radius:var(--rs);border:1px solid var(--bd);background:var(--bg0);color:var(--t1);font-family:var(--fb);font-size:14px;transition:border-color var(--tr);outline:none}
+.inp:focus,.ta:focus{border-color:var(--ac)}.ta{resize:vertical;min-height:80px}
+.lbl{display:block;font-size:12px;font-weight:600;color:var(--t2);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px}.ig{margin-bottom:16px}
+.c{background:var(--bg1);border:1px solid var(--bd);border-radius:var(--rl);padding:28px;transition:all var(--tr)}
+.ch:hover{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac),var(--sh);transform:translateY(-2px)}
+.pg{max-width:960px;margin:0 auto;padding:40px 24px;width:100%;position:relative;z-index:1;animation:fi .3s ease}.pw{max-width:1100px}
+@keyframes fi{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes su{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes si{from{opacity:0;transform:scale(0.95)}to{opacity:1;transform:scale(1)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.st{font-family:var(--fd);font-size:32px;font-weight:700;letter-spacing:-0.5px;margin-bottom:8px}
+.ss{color:var(--t2);font-size:15px;margin-bottom:32px;line-height:1.5}
+.gg{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px}
+.gc{cursor:pointer;position:relative;overflow:hidden}
+.gc::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,var(--acs),transparent);opacity:0;transition:opacity var(--tr);border-radius:var(--rl);pointer-events:none}
+.gc:hover::after{opacity:1}
+.gi{font-size:36px;margin-bottom:16px;display:block}.gn{font-family:var(--fd);font-size:20px;font-weight:600;margin-bottom:6px}
+.gd{color:var(--t2);font-size:13px;line-height:1.5;margin-bottom:16px}
+.gm{display:flex;gap:16px;font-size:12px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;font-weight:500}
+.qpb{width:100%;height:4px;background:var(--bg2);border-radius:2px;overflow:hidden;margin-bottom:32px}
+.qpf{height:100%;background:linear-gradient(90deg,var(--ac),#a78bfa);border-radius:2px;transition:width .4s cubic-bezier(.4,0,.2,1)}
+.qc{font-size:13px;color:var(--t3);font-weight:500;text-transform:uppercase;letter-spacing:1px}
+.qq{font-family:var(--fd);font-size:26px;font-weight:600;line-height:1.4;margin-bottom:32px;letter-spacing:-.3px}
+.ob{display:flex;align-items:center;gap:16px;width:100%;padding:18px 22px;border-radius:var(--r);border:1px solid var(--bd);background:var(--bg1);color:var(--t1);font-family:var(--fb);font-size:15px;cursor:pointer;transition:all var(--tr);text-align:left;margin-bottom:12px}
+.ob:hover:not(.od){border-color:var(--ac);background:var(--acs)}
+.ol{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;background:var(--bg2);border:1px solid var(--bd);flex-shrink:0;transition:all var(--tr)}
+.oc{border-color:var(--ok)!important;background:var(--oks)!important}.oc .ol{background:var(--ok);border-color:var(--ok);color:#fff}
+.ow{border-color:var(--err)!important;background:var(--errs)!important}.ow .ol{background:var(--err);border-color:var(--err);color:#fff}
+.od{cursor:default}
+.eb{margin-top:20px;padding:16px 20px;border-radius:var(--r);background:var(--acs);border:1px solid rgba(124,110,240,.2);font-size:14px;line-height:1.6;color:var(--t2);animation:su .3s ease}
+.eb strong{color:var(--ac);display:block;margin-bottom:4px;font-size:12px;text-transform:uppercase;letter-spacing:.8px}
+.qa{display:flex;justify-content:space-between;align-items:center;margin-top:32px;gap:12px}
+.fb{color:var(--t3);transition:color var(--tr)}.fb.ff{color:var(--wrn)}
+.rh{text-align:center;padding:48px 24px;margin-bottom:32px}
+.rs{font-family:var(--fd);font-size:72px;font-weight:800;background:linear-gradient(135deg,var(--ac),var(--ok));-webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1;margin-bottom:8px}
+.rl{font-size:16px;color:var(--t2);margin-bottom:32px}
+.rst{display:flex;gap:24px;justify-content:center;flex-wrap:wrap;margin-bottom:32px}
+.sc{padding:10px 20px;border-radius:var(--r);background:var(--bg2);border:1px solid var(--bd);font-size:14px;font-weight:500}
+.sc b{font-weight:700;margin-right:4px}
+.wi{padding:20px;border-radius:var(--r);background:var(--bg1);border:1px solid var(--bd);margin-bottom:12px;animation:su .3s ease}
+.mo{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px;animation:fi .2s ease}
+.md{background:var(--bg1);border:1px solid var(--bd);border-radius:var(--rl);padding:32px;max-width:560px;width:100%;max-height:90vh;overflow-y:auto;animation:si .2s ease;box-shadow:${t==="dark"?"0 8px 40px rgba(0,0,0,.4)":"0 8px 40px rgba(0,0,0,.1)"}}
+.mt{font-family:var(--fd);font-size:22px;font-weight:700;margin-bottom:24px}.ma{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+.lp{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+.lc{max-width:400px;width:100%;text-align:center}
+.hi{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:var(--bg1);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:8px}
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.bgs{background:var(--oks);color:var(--ok)}.bge{background:var(--errs);color:var(--err)}.bgw{background:var(--wrns);color:var(--wrn)}.bga{background:var(--acs);color:var(--ac)}
+.tabs{display:flex;gap:4px;background:var(--bg2);padding:4px;border-radius:var(--r);margin-bottom:24px}
+.tab{flex:1;padding:10px 16px;border-radius:var(--rs);border:none;background:transparent;color:var(--t2);font-family:var(--fb);font-size:14px;font-weight:500;cursor:pointer;transition:all var(--tr)}
+.tab.act{background:var(--bg1);color:var(--t1);box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.toast{position:fixed;bottom:24px;right:24px;padding:14px 22px;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);font-size:14px;z-index:300;animation:su .3s ease;box-shadow:var(--sh)}
+.toast-s{border-color:var(--ok)}.toast-e{border-color:var(--err)}
+.dots{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:24px;justify-content:center}
+.dot{width:28px;height:28px;border-radius:50%;border:2px solid var(--bd);background:var(--bg2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;cursor:pointer;transition:all var(--tr);color:var(--t3)}
+.dot.cur{border-color:var(--ac);color:var(--ac);background:var(--acs)}
+.dot.dok{border-color:var(--ok);background:var(--oks);color:var(--ok)}
+.dot.dng{border-color:var(--err);background:var(--errs);color:var(--err)}
+.dot.dfl{box-shadow:0 0 0 2px var(--wrn)}
+.ur{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;background:var(--bg1);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:8px;gap:12px;flex-wrap:wrap}
+.ui{display:flex;align-items:center;gap:12px;flex:1;min-width:200px}
+.ua{width:40px;height:40px;border-radius:50%;background:var(--acs);display:flex;align-items:center;justify-content:center;color:var(--ac);font-weight:700;font-size:16px;flex-shrink:0}
+.us{display:flex;gap:16px;font-size:12px;color:var(--t3);flex-wrap:wrap}
+.pp{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;text-align:center}
+.pc{max-width:440px;width:100%}
+.pi{font-size:64px;margin-bottom:24px;display:block;animation:pulse 2s infinite}
+.nd{width:8px;height:8px;border-radius:50%;background:var(--err);position:absolute;top:-2px;right:-2px}
+.aqi{padding:14px 18px;border-radius:var(--rs);background:var(--bg2);border:1px solid var(--bd);margin-bottom:6px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.aqt{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agi{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-radius:var(--r);background:var(--bg1);border:1px solid var(--bd);margin-bottom:8px;gap:12px}
+.pct-bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:4px}.pct-fill{height:100%;border-radius:3px;transition:width .3s}
+@media(max-width:640px){.nav{padding:12px 16px}.logo{font-size:18px}.pg{padding:24px 16px}.st{font-size:24px}.qq{font-size:20px}.rs{font-size:56px}.gg{grid-template-columns:1fr}.md{padding:24px}.ur{flex-direction:column;align-items:flex-start}}
 `;
 
 // ─── Main App ───
 export default function QuizApp() {
-  const [state, setState] = useState({
-    page: "login",
-    user: null,
-    users: {},
-    groups: [],
-    currentGroup: null,
-    shuffledQuestions: [],
-    currentQIndex: 0,
-    answers: {},
-    flagged: {},
-    history: [],
-    allHistory: {},
-    toast: null,
-    adminTab: "groups",
-    editingGroup: null,
-    editingQuestion: null,
-    showModal: null,
-    loading: true,
-    theme: "dark",
+  const [s, _set] = useState({
+    page: "login", user: null, groups: [], questions: {},
+    curGroup: null, shuffled: [], qi: 0, ans: {}, flags: {},
+    history: [], users: [],
+    toast: null, theme: "dark", adminTab: "groups",
+    editGroup: null, editQ: null, modal: null, loading: true,
   });
-
-  const s = state;
-  const set = (u) => setState(p => ({ ...p, ...u }));
-  const toastTimeout = useRef(null);
-  const showToast = (msg, type = "success") => {
-    if (toastTimeout.current) clearTimeout(toastTimeout.current);
-    set({ toast: { msg, type } });
-    toastTimeout.current = setTimeout(() => set({ toast: null }), 3000);
+  const set = (u) => _set(p => ({ ...p, ...u }));
+  const tRef = useRef(null);
+  const toast = (m, t = "s") => {
+    if (tRef.current) clearTimeout(tRef.current);
+    set({ toast: { m, t } });
+    tRef.current = setTimeout(() => set({ toast: null }), 3000);
   };
 
-  // ─── Init ───
+  const [lf, setLf] = useState({ u: "", p: "", p2: "", signup: false, remember: false });
+  const [gf, setGf] = useState({ name: "", description: "", icon: "📝" });
+  const [qf, setQf] = useState({ text: "", options: ["","","",""], correct: 0, explanation: "" });
+  const [bulk, setBulk] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const letters = ["A","B","C","D"];
+
+  // ─── Init: check session ───
   useEffect(() => {
     (async () => {
-      const user = await DB.get("quiz-user");
-      const users = (await DB.get("quiz-users")) || {};
-      const groups = await DB.get("quiz-groups");
-      const history = await DB.get("quiz-history");
-      const allHistory = (await DB.get("quiz-all-history")) || {};
-      const theme = (await DB.get("quiz-theme")) || "dark";
-      set({
-        user: user || null,
-        users,
-        groups: groups || DEFAULT_GROUPS,
-        history: history || [],
-        allHistory,
-        theme,
-        page: user ? (user.status === "pending" ? "pending" : "home") : "login",
-        loading: false,
-      });
-      if (!groups) await DB.set("quiz-groups", DEFAULT_GROUPS);
+      const theme = localStorage.getItem("qv-theme") || "dark";
+      const token = localStorage.getItem("qv-token");
+      if (token) {
+        const { data: sess } = await supabase.from("sessions").select("user_id, expires_at").eq("token", token).single();
+        if (sess && new Date(sess.expires_at) > new Date()) {
+          const { data: user } = await supabase.from("users").select("*").eq("id", sess.user_id).single();
+          if (user) {
+            set({ user, theme, page: user.status === "pending" ? "pending" : "home", loading: false });
+            loadGroups();
+            loadHistory(user.id);
+            if (user.is_admin) loadUsers();
+            return;
+          }
+        }
+        localStorage.removeItem("qv-token");
+      }
+      set({ theme, loading: false });
     })();
   }, []);
 
-  // ─── Inject styles ───
+  // ─── Styles ───
   useEffect(() => {
-    const el = document.getElementById("quiz-styles") || document.createElement("style");
-    el.id = "quiz-styles";
-    el.textContent = getStyles(s.theme);
+    const el = document.getElementById("qv-css") || document.createElement("style");
+    el.id = "qv-css"; el.textContent = mkStyles(s.theme);
     if (!el.parentNode) document.head.appendChild(el);
   }, [s.theme]);
 
-  const toggleTheme = async () => {
+  const toggleTheme = () => {
     const t = s.theme === "dark" ? "light" : "dark";
-    set({ theme: t });
-    await DB.set("quiz-theme", t);
+    set({ theme: t }); localStorage.setItem("qv-theme", t);
   };
 
-  // ─── Persistence ───
-  const saveGroups = async (groups) => { set({ groups }); await DB.set("quiz-groups", groups); };
-  const saveHistory = async (history) => { set({ history }); await DB.set("quiz-history", history); };
-  const saveUsers = async (users) => { set({ users }); await DB.set("quiz-users", users); };
-  const saveAllHistory = async (allHistory) => { set({ allHistory }); await DB.set("quiz-all-history", allHistory); };
+  // ─── Data Loading ───
+  const loadGroups = async () => {
+    const { data: groups } = await supabase.from("groups").select("*").order("sort_order");
+    const { data: allQ } = await supabase.from("questions").select("*");
+    const qMap = {};
+    (allQ || []).forEach(q => {
+      if (!qMap[q.group_id]) qMap[q.group_id] = [];
+      qMap[q.group_id].push(q);
+    });
+    set({ groups: groups || [], questions: qMap });
+  };
+
+  const loadHistory = async (userId) => {
+    const { data } = await supabase.from("attempts").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(50);
+    set({ history: data || [] });
+  };
+
+  const loadUsers = async () => {
+    const { data } = await supabase.from("users").select("*").order("created_at");
+    set({ users: data || [] });
+  };
 
   // ─── Auth ───
-  const [loginForm, setLoginForm] = useState({ username: "", password: "", isSignup: false, displayName: "" });
+  const handleAuth = async () => {
+    const { u, p, p2, signup, remember } = lf;
+    if (!u.trim() || !p.trim()) return toast("Fill in all fields", "e");
+    const ph = await hashPw(p);
 
-  const handleLogin = async () => {
-    const { username, password, isSignup, displayName } = loginForm;
-    if (!username.trim() || !password.trim()) return showToast("Please fill in all fields", "error");
-    if (isSignup && !displayName.trim()) return showToast("Please enter your name", "error");
-
-    const users = (await DB.get("quiz-users")) || {};
-
-    if (isSignup) {
-      if (users[username]) return showToast("Username already taken", "error");
-      const isFirst = Object.keys(users).length === 0;
-      const user = {
-        username, password, displayName: displayName.trim(),
-        isAdmin: isFirst,
-        status: isFirst ? "approved" : "pending",
-        createdAt: new Date().toISOString(),
-      };
-      users[username] = user;
-      await DB.set("quiz-users", users);
-      await DB.set("quiz-user", user);
-      set({ user, users, page: isFirst ? "home" : "pending" });
-      if (isFirst) showToast(`Welcome, ${user.displayName}! You are the admin.`);
-      else showToast("Account created! Waiting for admin approval.");
+    if (signup) {
+      if (p !== p2) return toast("Passwords don't match", "e");
+      if (p.length < 4) return toast("Password must be at least 4 characters", "e");
+      const { data: exists } = await supabase.from("users").select("id").eq("username", u.trim()).single();
+      if (exists) return toast("Username already taken", "e");
+      const { data: count } = await supabase.from("users").select("id", { count: "exact", head: true });
+      const { data: allUsers } = await supabase.from("users").select("id");
+      const isFirst = !allUsers || allUsers.length === 0;
+      const { data: user, error } = await supabase.from("users").insert({
+        username: u.trim(), password_hash: ph, is_admin: isFirst, status: isFirst ? "approved" : "pending"
+      }).select().single();
+      if (error) return toast("Error creating account", "e");
+      if (remember || isFirst) {
+        const token = genToken();
+        await supabase.from("sessions").insert({ user_id: user.id, token });
+        localStorage.setItem("qv-token", token);
+      }
+      set({ user, page: isFirst ? "home" : "pending" });
+      if (isFirst) { toast("Welcome! You are the admin."); loadGroups(); }
+      else toast("Account created! Waiting for approval.");
     } else {
-      const user = users[username];
-      if (!user || user.password !== password) return showToast("Invalid credentials", "error");
-      if (user.status === "banned") return showToast("Your account has been suspended", "error");
-      await DB.set("quiz-user", user);
-      const userHistory = (await DB.get("quiz-all-history")) || {};
-      set({
-        user, users, history: userHistory[username] || [],
-        page: user.status === "pending" ? "pending" : "home"
-      });
-      if (user.status === "approved") showToast(`Welcome back, ${user.displayName}!`);
+      const { data: user } = await supabase.from("users").select("*").eq("username", u.trim()).single();
+      if (!user || user.password_hash !== ph) return toast("Invalid credentials", "e");
+      if (user.status === "banned") return toast("Account suspended", "e");
+      if (remember) {
+        const token = genToken();
+        await supabase.from("sessions").insert({ user_id: user.id, token });
+        localStorage.setItem("qv-token", token);
+      }
+      set({ user, page: user.status === "pending" ? "pending" : "home" });
+      if (user.status === "approved") toast(`Welcome back, ${user.username}!`);
+      loadGroups(); loadHistory(user.id);
+      if (user.is_admin) loadUsers();
     }
   };
 
-  const handleLogout = async () => {
-    await DB.del("quiz-user");
-    set({ user: null, page: "login", history: [] });
-    setLoginForm({ username: "", password: "", isSignup: false, displayName: "" });
+  const logout = async () => {
+    const token = localStorage.getItem("qv-token");
+    if (token) await supabase.from("sessions").delete().eq("token", token);
+    localStorage.removeItem("qv-token");
+    set({ user: null, page: "login", history: [], users: [] });
+    setLf({ u: "", p: "", p2: "", signup: false, remember: false });
   };
 
   // ─── User Management ───
-  const updateUserStatus = async (username, status) => {
-    const users = { ...s.users };
-    if (!users[username]) return;
-    users[username] = { ...users[username], status };
-    await saveUsers(users);
-    if (s.user?.username === username) {
-      const u = { ...s.user, status };
-      set({ user: u });
-      await DB.set("quiz-user", u);
-    }
-    showToast(`User ${username} ${status === "approved" ? "approved" : status === "banned" ? "banned" : "updated"}`);
+  const setUserStatus = async (id, status) => {
+    await supabase.from("users").update({ status }).eq("id", id);
+    loadUsers(); toast(`User ${status}`);
+  };
+  const deleteUser = async (id) => {
+    await supabase.from("attempts").delete().eq("user_id", id);
+    await supabase.from("sessions").delete().eq("user_id", id);
+    await supabase.from("users").delete().eq("id", id);
+    loadUsers(); toast("User deleted"); set({ modal: null });
+  };
+  const toggleAdmin = async (id, cur) => {
+    await supabase.from("users").update({ is_admin: !cur }).eq("id", id);
+    loadUsers(); toast(cur ? "Admin removed" : "Admin granted");
+  };
+  const resetUserPw = async (id) => {
+    if (!newPw || newPw.length < 4) return toast("Min 4 characters", "e");
+    const h = await hashPw(newPw);
+    await supabase.from("users").update({ password_hash: h }).eq("id", id);
+    await supabase.from("sessions").delete().eq("user_id", id);
+    setNewPw(""); toast("Password reset"); set({ modal: null });
   };
 
-  const deleteUser = async (username) => {
-    const users = { ...s.users };
-    delete users[username];
-    await saveUsers(users);
-    const ah = { ...s.allHistory };
-    delete ah[username];
-    await saveAllHistory(ah);
-    showToast(`User ${username} deleted`);
-    set({ showModal: null });
-  };
-
-  const toggleAdmin = async (username) => {
-    const users = { ...s.users };
-    if (!users[username]) return;
-    users[username] = { ...users[username], isAdmin: !users[username].isAdmin };
-    await saveUsers(users);
-    showToast(`${username} is ${users[username].isAdmin ? "now an admin" : "no longer an admin"}`);
+  // ─── Profile / Change Password ───
+  const [cpf, setCpf] = useState({ old: "", new1: "", new2: "" });
+  const changePw = async () => {
+    if (!cpf.old || !cpf.new1) return toast("Fill all fields", "e");
+    if (cpf.new1 !== cpf.new2) return toast("New passwords don't match", "e");
+    if (cpf.new1.length < 4) return toast("Min 4 characters", "e");
+    const oldH = await hashPw(cpf.old);
+    if (oldH !== s.user.password_hash) return toast("Current password is wrong", "e");
+    const newH = await hashPw(cpf.new1);
+    await supabase.from("users").update({ password_hash: newH }).eq("id", s.user.id);
+    set({ user: { ...s.user, password_hash: newH } });
+    setCpf({ old: "", new1: "", new2: "" });
+    toast("Password changed!");
   };
 
   // ─── Quiz ───
   const startQuiz = (group) => {
-    const shuffled = shuffle(group.questions);
-    set({ currentGroup: group, shuffledQuestions: shuffled, currentQIndex: 0, answers: {}, flagged: {}, page: "quiz" });
+    const qs = s.questions[group.id] || [];
+    if (qs.length === 0) return toast("No questions yet", "e");
+    set({ curGroup: group, shuffled: shuffle(qs), qi: 0, ans: {}, flags: {}, page: "quiz" });
   };
 
-  const selectAnswer = (qId, idx) => {
-    if (s.answers[qId] !== undefined) return;
-    set({ answers: { ...s.answers, [qId]: idx } });
-  };
-
-  const toggleFlag = (qId) => {
-    const f = { ...s.flagged };
-    if (f[qId]) delete f[qId]; else f[qId] = true;
-    set({ flagged: f });
-  };
+  const pickAns = (qId, idx) => { if (s.ans[qId] !== undefined) return; set({ ans: { ...s.ans, [qId]: idx } }); };
+  const toggleFlag = (qId) => { const f = { ...s.flags }; f[qId] ? delete f[qId] : f[qId] = true; set({ flags: f }); };
 
   const finishQuiz = async () => {
-    const qs = s.shuffledQuestions;
-    let correct = 0;
-    const wrong = [];
+    const qs = s.shuffled;
+    let score = 0; const wrong = [];
     qs.forEach(q => {
-      if (s.answers[q.id] === q.correct) correct++;
-      else wrong.push({ text: q.text, yourAnswer: q.options[s.answers[q.id]] || "Skipped", correctAnswer: q.options[q.correct], explanation: q.explanation });
+      const opts = typeof q.options === "string" ? JSON.parse(q.options) : q.options;
+      if (s.ans[q.id] === q.correct) score++;
+      else wrong.push({ text: q.text, yours: opts[s.ans[q.id]] || "Skipped", correct: opts[q.correct], explanation: q.explanation });
     });
-    const entry = { groupId: s.currentGroup.id, groupName: s.currentGroup.name, score: correct, total: qs.length, date: new Date().toISOString(), wrong };
-    const newHistory = [entry, ...s.history].slice(0, 50);
-    await saveHistory(newHistory);
-    // Save to all history
-    const ah = { ...s.allHistory };
-    ah[s.user.username] = newHistory;
-    await saveAllHistory(ah);
-    set({ page: "results", lastResult: entry });
+    const { data: attempt } = await supabase.from("attempts").insert({
+      user_id: s.user.id, group_id: s.curGroup.id, group_name: s.curGroup.name,
+      score, total: qs.length, wrong
+    }).select().single();
+    loadHistory(s.user.id);
+    set({ page: "results", lastRes: { score, total: qs.length, wrong, group_name: s.curGroup.name } });
   };
 
-  // ─── Admin ───
-  const [groupForm, setGroupForm] = useState({ name: "", description: "", icon: "📝" });
-  const [qForm, setQForm] = useState({ text: "", options: ["", "", "", ""], correct: 0, explanation: "" });
-  const [bulkText, setBulkText] = useState("");
-  const resetGroupForm = () => setGroupForm({ name: "", description: "", icon: "📝" });
-  const resetQForm = () => setQForm({ text: "", options: ["", "", "", ""], correct: 0, explanation: "" });
-
+  // ─── Admin: Groups ───
   const addGroup = async () => {
-    if (!groupForm.name.trim()) return showToast("Group name required", "error");
-    await saveGroups([...s.groups, { id: genId(), ...groupForm, questions: [] }]);
-    resetGroupForm();
-    showToast("Group created!");
-    set({ adminTab: "groups" });
+    if (!gf.name.trim()) return toast("Name required", "e");
+    await supabase.from("groups").insert({ name: gf.name, description: gf.description, icon: gf.icon });
+    setGf({ name: "", description: "", icon: "📝" }); loadGroups(); toast("Group created!"); set({ adminTab: "groups" });
+  };
+  const delGroup = async (id) => {
+    await supabase.from("groups").delete().eq("id", id);
+    loadGroups(); toast("Group deleted"); set({ modal: null });
+  };
+  const updGroup = async (id, u) => {
+    await supabase.from("groups").update(u).eq("id", id);
+    loadGroups();
   };
 
-  const deleteGroup = async (id) => {
-    await saveGroups(s.groups.filter(g => g.id !== id));
-    showToast("Group deleted");
-    set({ showModal: null });
+  // ─── Admin: Questions ───
+  const addQ = async (gid) => {
+    if (!qf.text.trim() || qf.options.some(o => !o.trim())) return toast("Fill all fields", "e");
+    await supabase.from("questions").insert({ group_id: gid, text: qf.text, options: qf.options, correct: qf.correct, explanation: qf.explanation });
+    setQf({ text: "", options: ["","","",""], correct: 0, explanation: "" }); loadGroups(); toast("Question added!");
   };
-
-  const updateGroup = async (id, updates) => {
-    await saveGroups(s.groups.map(g => g.id === id ? { ...g, ...updates } : g));
+  const updQ = async (id, u) => {
+    await supabase.from("questions").update(u).eq("id", id);
+    loadGroups(); toast("Updated");
   };
-
-  const addQuestion = async (groupId) => {
-    if (!qForm.text.trim() || qForm.options.some(o => !o.trim())) return showToast("Fill in all fields", "error");
-    await saveGroups(s.groups.map(g => g.id === groupId ? { ...g, questions: [...g.questions, { id: genId(), ...qForm }] } : g));
-    resetQForm();
-    showToast("Question added!");
+  const delQ = async (id) => {
+    await supabase.from("questions").delete().eq("id", id);
+    loadGroups(); toast("Deleted");
   };
-
-  const updateQuestion = async (groupId, qId, updates) => {
-    await saveGroups(s.groups.map(g => g.id === groupId ? { ...g, questions: g.questions.map(q => q.id === qId ? { ...q, ...updates } : q) } : g));
-    showToast("Question updated");
-  };
-
-  const deleteQuestion = async (groupId, qId) => {
-    await saveGroups(s.groups.map(g => g.id === groupId ? { ...g, questions: g.questions.filter(q => q.id !== qId) } : g));
-    showToast("Question deleted");
-  };
-
-  const importBulk = async (groupId) => {
+  const importBulk = async (gid) => {
     try {
-      const lines = bulkText.trim().split("\n").filter(l => l.trim());
-      const questions = [];
-      let i = 0;
+      const lines = bulk.trim().split("\n").filter(l => l.trim());
+      const qs = []; let i = 0;
       while (i < lines.length) {
         const text = lines[i]?.trim();
         const opts = [];
-        for (let j = 1; j <= 4; j++) {
-          if (i + j < lines.length) opts.push(lines[i + j]?.replace(/^[A-D][\.\)]\s*/, "").trim());
-        }
-        const correctLine = lines[i + 5]?.trim();
-        const correctIdx = correctLine ? "ABCD".indexOf(correctLine.toUpperCase().replace("ANSWER:", "").replace("CORRECT:", "").trim()) : 0;
-        const explanation = lines[i + 6]?.trim() || "";
-        if (text && opts.length === 4) {
-          questions.push({ id: genId(), text, options: opts, correct: clamp(correctIdx, 0, 3), explanation });
-        }
+        for (let j = 1; j <= 4; j++) if (i+j < lines.length) opts.push(lines[i+j]?.replace(/^[A-D][\.\)]\s*/, "").trim());
+        const cl = lines[i+5]?.trim();
+        const ci = cl ? "ABCD".indexOf(cl.toUpperCase().replace("ANSWER:","").replace("CORRECT:","").trim()) : 0;
+        const exp = lines[i+6]?.trim() || "";
+        if (text && opts.length === 4) qs.push({ group_id: gid, text, options: opts, correct: Math.max(0,Math.min(ci,3)), explanation: exp });
         i += 7;
       }
-      if (questions.length === 0) return showToast("No valid questions found", "error");
-      await saveGroups(s.groups.map(g => g.id === groupId ? { ...g, questions: [...g.questions, ...questions] } : g));
-      setBulkText("");
-      showToast(`${questions.length} questions imported!`);
-    } catch { showToast("Import failed", "error"); }
+      if (qs.length === 0) return toast("No valid questions", "e");
+      await supabase.from("questions").insert(qs);
+      setBulk(""); loadGroups(); toast(`${qs.length} questions imported!`);
+    } catch { toast("Import failed", "e"); }
   };
+
+  // ─── Question Stats ───
+  const getQStats = useCallback(async (gid) => {
+    const { data: attempts } = await supabase.from("attempts").select("wrong, total, score").not("group_id", "is", null).eq("group_id", gid);
+    return attempts || [];
+  }, []);
 
   // ─── Computed ───
-  const pendingUsers = Object.values(s.users).filter(u => u.status === "pending");
-  const pendingCount = pendingUsers.length;
-  const letters = ["A", "B", "C", "D"];
+  const pendingN = s.users.filter(u => u.status === "pending").length;
 
-  const getUserStats = (username) => {
-    const h = s.allHistory[username] || [];
-    if (h.length === 0) return { quizzes: 0, avgScore: 0, bestScore: 0 };
-    const scores = h.map(e => Math.round(e.score / e.total * 100));
-    return {
-      quizzes: h.length,
-      avgScore: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length),
-      bestScore: Math.max(...scores),
-    };
+  const getUserAttempts = async (uid) => {
+    const { data } = await supabase.from("attempts").select("score, total").eq("user_id", uid);
+    return data || [];
   };
 
-  if (s.loading) return (
-    <div className="app-container noise-bg" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-      <div className="section-title" style={{ fontSize: 24 }}>Loading...</div>
-    </div>
-  );
+  if (s.loading) return <div className="app" style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><div className="st" style={{fontSize:24}}>Loading...</div></div>;
 
-  const currentQ = s.shuffledQuestions?.[s.currentQIndex];
+  const curQ = s.shuffled?.[s.qi];
+  const getOpts = (q) => typeof q?.options === "string" ? JSON.parse(q.options) : (q?.options || []);
 
   return (
-    <div className="app-container noise-bg">
-      {/* ── Nav ── */}
+    <div className="app">
+      {/* Nav */}
       {s.page !== "login" && s.page !== "pending" && (
         <nav className="nav">
-          <div className="nav-logo" onClick={() => set({ page: "home" })}>QuizVault</div>
-          <div className="nav-actions">
-            <button className="btn btn-ghost btn-sm" onClick={() => set({ page: "home" })}><Icons.Home /> Home</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => set({ page: "history" })}><Icons.Chart /> History</button>
-            {s.user?.isAdmin && (
-              <button className="btn btn-ghost btn-sm" onClick={() => set({ page: "admin", adminTab: "groups" })} style={{ position: "relative" }}>
-                <Icons.Gear /> Admin
-                {pendingCount > 0 && <span className="notif-dot" />}
+          <div className="logo" onClick={() => set({ page: "home" })}>QuizVault</div>
+          <div className="nav-r">
+            <button className="b bg bs" onClick={() => set({ page: "home" })}><I.Home /> Home</button>
+            <button className="b bg bs" onClick={() => set({ page: "history" })}><I.Chart /> History</button>
+            <button className="b bg bs" onClick={() => set({ page: "profile" })}><I.User /> Profile</button>
+            {s.user?.is_admin && (
+              <button className="b bg bs" onClick={() => { set({ page: "admin", adminTab: "groups" }); loadUsers(); loadGroups(); }} style={{position:"relative"}}>
+                <I.Gear /> Admin {pendingN > 0 && <span className="nd"/>}
               </button>
             )}
-            <button className="btn btn-ghost btn-icon btn-sm" onClick={toggleTheme} title="Toggle theme">
-              {s.theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
-            </button>
-            <button className="btn btn-sm" onClick={handleLogout}>Logout</button>
+            <button className="b bg bi bs" onClick={toggleTheme}>{s.theme==="dark"?<I.Sun/>:<I.Moon/>}</button>
+            <button className="b bs" onClick={logout}>Logout</button>
           </div>
         </nav>
       )}
 
-      {/* ── Login ── */}
+      {/* Login */}
       {s.page === "login" && (
-        <div className="login-page">
-          <div className="login-card card" style={{ animation: "scaleIn 0.4s ease" }}>
-            <span className="group-icon" style={{ fontSize: 48, marginBottom: 24, display: "block" }}>🧠</span>
-            <div className="section-title">QuizVault</div>
-            <p style={{ color: "var(--text-secondary)", marginBottom: 28, fontSize: 14 }}>Test your knowledge across multiple topics</p>
-            <div style={{ position: "absolute", top: 16, right: 16 }}>
-              <button className="btn btn-ghost btn-icon btn-sm" onClick={toggleTheme}>
-                {s.theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
-              </button>
+        <div className="lp">
+          <div className="lc c" style={{animation:"si .4s ease",position:"relative"}}>
+            <span style={{fontSize:48,display:"block",marginBottom:24}}>🧠</span>
+            <div className="st">QuizVault</div>
+            <p style={{color:"var(--t2)",marginBottom:28,fontSize:14}}>Test your knowledge across multiple topics</p>
+            <div style={{position:"absolute",top:16,right:16}}>
+              <button className="b bg bi bs" onClick={toggleTheme}>{s.theme==="dark"?<I.Sun/>:<I.Moon/>}</button>
             </div>
-            <div className="tabs" style={{ marginBottom: 24 }}>
-              <button className={`tab ${!loginForm.isSignup ? "active" : ""}`} onClick={() => setLoginForm(f => ({ ...f, isSignup: false }))}>Sign In</button>
-              <button className={`tab ${loginForm.isSignup ? "active" : ""}`} onClick={() => setLoginForm(f => ({ ...f, isSignup: true }))}>Sign Up</button>
+            <div className="tabs" style={{marginBottom:24}}>
+              <button className={`tab ${!lf.signup?"act":""}`} onClick={() => setLf(f=>({...f,signup:false}))}>Sign In</button>
+              <button className={`tab ${lf.signup?"act":""}`} onClick={() => setLf(f=>({...f,signup:true}))}>Sign Up</button>
             </div>
-            {loginForm.isSignup && (
-              <div className="input-group">
-                <label className="input-label">Display Name</label>
-                <input className="input" placeholder="Your name" value={loginForm.displayName}
-                  onChange={e => setLoginForm(f => ({ ...f, displayName: e.target.value }))} />
+            <div className="ig"><label className="lbl">Username</label>
+              <input className="inp" placeholder="Enter username" value={lf.u} onChange={e=>setLf(f=>({...f,u:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&handleAuth()}/>
+            </div>
+            <div className="ig"><label className="lbl">Password</label>
+              <input className="inp" type="password" placeholder="Enter password" value={lf.p} onChange={e=>setLf(f=>({...f,p:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&handleAuth()}/>
+            </div>
+            {lf.signup && (
+              <div className="ig"><label className="lbl">Confirm Password</label>
+                <input className="inp" type="password" placeholder="Confirm password" value={lf.p2} onChange={e=>setLf(f=>({...f,p2:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&handleAuth()}/>
               </div>
             )}
-            <div className="input-group">
-              <label className="input-label">Username</label>
-              <input className="input" placeholder="Enter username" value={loginForm.username}
-                onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))}
-                onKeyDown={e => e.key === "Enter" && handleLogin()} />
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+              <input type="checkbox" id="rem" checked={lf.remember} onChange={e=>setLf(f=>({...f,remember:e.target.checked}))} style={{accentColor:"var(--ac)"}}/>
+              <label htmlFor="rem" style={{fontSize:13,color:"var(--t2)",cursor:"pointer"}}>Remember me</label>
             </div>
-            <div className="input-group">
-              <label className="input-label">Password</label>
-              <input className="input" type="password" placeholder="Enter password" value={loginForm.password}
-                onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
-                onKeyDown={e => e.key === "Enter" && handleLogin()} />
-            </div>
-            <button className="btn btn-primary" style={{ width: "100%", marginTop: 8 }} onClick={handleLogin}>
-              {loginForm.isSignup ? "Create Account" : "Sign In"}
-            </button>
-            <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 16 }}>
-              {loginForm.isSignup ? "Your account will need admin approval before you can access quizzes" : "Don't have an account? Sign up above"}
+            <button className="b bp" style={{width:"100%"}} onClick={handleAuth}>{lf.signup?"Create Account":"Sign In"}</button>
+            <p style={{color:"var(--t3)",fontSize:12,marginTop:16}}>
+              {lf.signup?"Your account will need admin approval":"Don't have an account? Sign up above"}
             </p>
           </div>
         </div>
       )}
 
-      {/* ── Pending Approval ── */}
+      {/* Pending */}
       {s.page === "pending" && (
-        <div className="pending-page">
-          <div className="pending-card card">
-            <span className="pending-icon">⏳</span>
-            <div className="section-title" style={{ marginBottom: 12 }}>Awaiting Approval</div>
-            <p style={{ color: "var(--text-secondary)", fontSize: 15, lineHeight: 1.6, marginBottom: 28 }}>
-              Your account has been created successfully. Please wait for an administrator to approve your access. You'll be able to take quizzes once approved.
+        <div className="pp">
+          <div className="pc c">
+            <span className="pi">⏳</span>
+            <div className="st" style={{marginBottom:12}}>Awaiting Approval</div>
+            <p style={{color:"var(--t2)",fontSize:15,lineHeight:1.6,marginBottom:28}}>
+              Your account has been created. Please wait for an administrator to approve your access.
             </p>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-              <button className="btn" onClick={async () => {
-                const users = (await DB.get("quiz-users")) || {};
-                const u = users[s.user?.username];
-                if (u && u.status === "approved") {
-                  await DB.set("quiz-user", u);
-                  set({ user: u, users, page: "home" });
-                  showToast("You've been approved! Welcome!");
-                } else {
-                  showToast("Still pending. Please check back later.", "error");
-                }
+            <div style={{display:"flex",gap:12,justifyContent:"center"}}>
+              <button className="b" onClick={async()=>{
+                const{data:u}=await supabase.from("users").select("*").eq("id",s.user.id).single();
+                if(u?.status==="approved"){set({user:u,page:"home"});loadGroups();loadHistory(u.id);toast("Approved! Welcome!");}
+                else toast("Still pending","e");
               }}>Check Status</button>
-              <button className="btn btn-ghost" onClick={handleLogout}>Logout</button>
+              <button className="b bg" onClick={logout}>Logout</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Home ── */}
+      {/* Home */}
       {s.page === "home" && (
-        <div className="page">
-          <div className="section-title">Choose a Quiz</div>
-          <p className="section-subtitle">Welcome back, {s.user?.displayName}. Select a topic to get started.</p>
-          <div className="group-grid">
-            {s.groups.map(g => (
-              <div key={g.id} className="card card-hover group-card" onClick={() => g.questions.length > 0 ? startQuiz(g) : showToast("No questions yet", "error")}>
-                <span className="group-icon">{g.icon}</span>
-                <div className="group-name">{g.name}</div>
-                <div className="group-desc">{g.description}</div>
-                <div className="group-meta">
-                  <span>{g.questions.length} questions</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Icons.Shuffle /> Shuffled</span>
-                  {s.history.find(h => h.groupId === g.id) && (
-                    <span style={{ color: "var(--success)" }}>
-                      Best: {Math.max(...s.history.filter(h => h.groupId === g.id).map(h => Math.round(h.score / h.total * 100)))}%
-                    </span>
-                  )}
+        <div className="pg">
+          <div className="st">Choose a Quiz</div>
+          <p className="ss">Welcome, {s.user?.username}. Select a topic to get started.</p>
+          <div className="gg">
+            {s.groups.map(g => {
+              const qs = s.questions[g.id] || [];
+              const best = s.history.filter(h=>h.group_id===g.id);
+              const bestPct = best.length > 0 ? Math.max(...best.map(h=>Math.round(h.score/h.total*100))) : null;
+              return (
+                <div key={g.id} className="c ch gc" onClick={()=>startQuiz(g)}>
+                  <span className="gi">{g.icon}</span>
+                  <div className="gn">{g.name}</div>
+                  <div className="gd">{g.description}</div>
+                  <div className="gm">
+                    <span>{qs.length} questions</span>
+                    <span style={{display:"flex",alignItems:"center",gap:4}}><I.Shuf/> Shuffled</span>
+                    {bestPct !== null && <span style={{color:"var(--ok)"}}>Best: {bestPct}%</span>}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-          {s.groups.length === 0 && (
-            <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)" }}>
-              No quiz groups available. {s.user?.isAdmin ? "Go to Admin to create one." : "Ask an admin to add some!"}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Quiz ── */}
-      {s.page === "quiz" && currentQ && (
-        <div className="page">
-          <div className="quiz-progress-bar">
-            <div className="quiz-progress-fill" style={{ width: `${((s.currentQIndex + 1) / s.shuffledQuestions.length) * 100}%` }} />
-          </div>
-          <div className="q-dots">
-            {s.shuffledQuestions.map((q, i) => {
-              let cls = "q-dot";
-              if (i === s.currentQIndex) cls += " current";
-              else if (s.answers[q.id] !== undefined) cls += s.answers[q.id] === q.correct ? " answered-correct" : " answered-wrong";
-              if (s.flagged[q.id]) cls += " flagged-dot";
-              return <button key={q.id} className={cls} onClick={() => set({ currentQIndex: i })}>{i + 1}</button>;
+              );
             })}
           </div>
-          <div className="quiz-header">
-            <div className="quiz-counter">Question {s.currentQIndex + 1} of {s.shuffledQuestions.length}</div>
-            <button className={`btn btn-ghost btn-sm flag-btn ${s.flagged[currentQ.id] ? "flagged" : ""}`}
-              onClick={() => toggleFlag(currentQ.id)}>
-              <Icons.Flag filled={!!s.flagged[currentQ.id]} />
-              {s.flagged[currentQ.id] ? "Flagged" : "Flag"}
-            </button>
-          </div>
-          <div className="quiz-question">{currentQ.text}</div>
-          <div>
-            {currentQ.options.map((opt, idx) => {
-              const answered = s.answers[currentQ.id] !== undefined;
-              const isSelected = s.answers[currentQ.id] === idx;
-              const isCorrect = idx === currentQ.correct;
-              let cls = "option-btn";
-              if (answered) {
-                cls += " option-disabled";
-                if (isCorrect) cls += " option-correct";
-                else if (isSelected && !isCorrect) cls += " option-wrong";
-              }
+          {s.groups.length === 0 && <div style={{textAlign:"center",padding:60,color:"var(--t3)"}}>No quiz groups yet.</div>}
+        </div>
+      )}
+
+      {/* Quiz */}
+      {s.page === "quiz" && curQ && (() => {
+        const opts = getOpts(curQ);
+        return (
+          <div className="pg">
+            <div className="qpb"><div className="qpf" style={{width:`${((s.qi+1)/s.shuffled.length)*100}%`}}/></div>
+            <div className="dots">
+              {s.shuffled.map((q,i) => {
+                let cl = "dot";
+                if(i===s.qi) cl+=" cur";
+                else if(s.ans[q.id]!==undefined) cl+=s.ans[q.id]===q.correct?" dok":" dng";
+                if(s.flags[q.id]) cl+=" dfl";
+                return <button key={q.id} className={cl} onClick={()=>set({qi:i})}>{i+1}</button>;
+              })}
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:32,flexWrap:"wrap",gap:16}}>
+              <div className="qc">Question {s.qi+1} of {s.shuffled.length}</div>
+              <button className={`b bg bs fb ${s.flags[curQ.id]?"ff":""}`} onClick={()=>toggleFlag(curQ.id)}>
+                <I.Flag filled={!!s.flags[curQ.id]}/>{s.flags[curQ.id]?"Flagged":"Flag"}
+              </button>
+            </div>
+            <div className="qq">{curQ.text}</div>
+            {opts.map((opt,idx) => {
+              const answered = s.ans[curQ.id]!==undefined;
+              const isSel = s.ans[curQ.id]===idx;
+              const isCor = idx===curQ.correct;
+              let cl = "ob";
+              if(answered){cl+=" od";if(isCor)cl+=" oc";else if(isSel&&!isCor)cl+=" ow";}
               return (
-                <button key={idx} className={cls} onClick={() => selectAnswer(currentQ.id, idx)}>
-                  <span className="option-letter">
-                    {answered && isCorrect ? <Icons.Check /> : answered && isSelected && !isCorrect ? <Icons.X /> : letters[idx]}
-                  </span>
+                <button key={idx} className={cl} onClick={()=>pickAns(curQ.id,idx)}>
+                  <span className="ol">{answered&&isCor?<I.Check/>:answered&&isSel&&!isCor?<I.X/>:letters[idx]}</span>
                   <span>{opt}</span>
                 </button>
               );
             })}
-          </div>
-          {s.answers[currentQ.id] !== undefined && currentQ.explanation && (
-            <div className="explanation-box"><strong>Explanation</strong>{currentQ.explanation}</div>
-          )}
-          <div className="quiz-actions">
-            <button className="btn btn-sm" disabled={s.currentQIndex === 0}
-              onClick={() => set({ currentQIndex: s.currentQIndex - 1 })}
-              style={{ opacity: s.currentQIndex === 0 ? 0.4 : 1 }}>
-              <Icons.Arrow dir="left" /> Previous
-            </button>
-            <div style={{ display: "flex", gap: 8 }}>
-              {Object.keys(s.flagged).length > 0 && (
-                <button className="btn btn-sm" style={{ color: "var(--flag)" }}
-                  onClick={() => set({ page: "flagged" })}>
-                  <Icons.Flag filled /> Review ({Object.keys(s.flagged).length})
-                </button>
+            {s.ans[curQ.id]!==undefined && curQ.explanation && <div className="eb"><strong>Explanation</strong>{curQ.explanation}</div>}
+            <div className="qa">
+              <button className="b bs" disabled={s.qi===0} onClick={()=>set({qi:s.qi-1})} style={{opacity:s.qi===0?.4:1}}>
+                <I.Arr d="l"/> Previous
+              </button>
+              <div style={{display:"flex",gap:8}}>
+                {Object.keys(s.flags).length>0 && <button className="b bs" style={{color:"var(--wrn)"}} onClick={()=>set({page:"flagged"})}><I.Flag filled/>Review ({Object.keys(s.flags).length})</button>}
+              </div>
+              {s.qi<s.shuffled.length-1 ? (
+                <button className="b bp bs" onClick={()=>set({qi:s.qi+1})}>Next <I.Arr d="r"/></button>
+              ) : (
+                <button className="b bp bs" onClick={finishQuiz}>Finish <I.Arr d="r"/></button>
               )}
             </div>
-            {s.currentQIndex < s.shuffledQuestions.length - 1 ? (
-              <button className="btn btn-primary btn-sm" onClick={() => set({ currentQIndex: s.currentQIndex + 1 })}>
-                Next <Icons.Arrow dir="right" />
-              </button>
-            ) : (
-              <button className="btn btn-primary btn-sm" onClick={finishQuiz}>
-                Finish Quiz <Icons.Arrow dir="right" />
-              </button>
-            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {/* ── Flagged ── */}
+      {/* Flagged */}
       {s.page === "flagged" && (
-        <div className="page">
-          <div className="section-title">Flagged Questions</div>
-          <p className="section-subtitle">Review the questions you flagged.</p>
-          {Object.keys(s.flagged).length === 0 ? (
-            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40 }}>No flagged questions</div>
-          ) : s.shuffledQuestions.filter(q => s.flagged[q.id]).map(q => (
-            <div key={q.id} className="card" style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <span className="badge badge-warning">Flagged</span>
-                <button className="btn btn-ghost btn-sm" onClick={() => {
-                  set({ page: "quiz", currentQIndex: s.shuffledQuestions.findIndex(x => x.id === q.id) });
-                }}>Go to question</button>
-              </div>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>{q.text}</div>
-              {s.answers[q.id] !== undefined ? (
-                <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  Your answer: <span style={{ color: s.answers[q.id] === q.correct ? "var(--success)" : "var(--error)", fontWeight: 600 }}>
-                    {q.options[s.answers[q.id]]}
-                  </span>
-                  {s.answers[q.id] !== q.correct && <> — Correct: <span style={{ color: "var(--success)", fontWeight: 600 }}>{q.options[q.correct]}</span></>}
+        <div className="pg">
+          <div className="st">Flagged Questions</div>
+          <p className="ss">Review your flagged questions.</p>
+          {s.shuffled.filter(q=>s.flags[q.id]).map(q => {
+            const opts = getOpts(q);
+            return (
+              <div key={q.id} className="c" style={{marginBottom:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <span className="badge bgw">Flagged</span>
+                  <button className="b bg bs" onClick={()=>set({page:"quiz",qi:s.shuffled.findIndex(x=>x.id===q.id)})}>Go to question</button>
                 </div>
-              ) : <span className="badge badge-accent">Not answered</span>}
-            </div>
-          ))}
-          <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => set({ page: "quiz" })}>
-            <Icons.Arrow dir="left" /> Back to Quiz
-          </button>
+                <div style={{fontSize:16,fontWeight:600,marginBottom:12}}>{q.text}</div>
+                {s.ans[q.id]!==undefined ? (
+                  <div style={{fontSize:13,color:"var(--t2)"}}>
+                    Your answer: <span style={{color:s.ans[q.id]===q.correct?"var(--ok)":"var(--err)",fontWeight:600}}>{opts[s.ans[q.id]]}</span>
+                    {s.ans[q.id]!==q.correct && <> — Correct: <span style={{color:"var(--ok)",fontWeight:600}}>{opts[q.correct]}</span></>}
+                  </div>
+                ) : <span className="badge bga">Not answered</span>}
+              </div>
+            );
+          })}
+          <button className="b bp" style={{marginTop:16}} onClick={()=>set({page:"quiz"})}><I.Arr d="l"/> Back to Quiz</button>
         </div>
       )}
 
-      {/* ── Results ── */}
-      {s.page === "results" && s.lastResult && (
-        <div className="page">
-          <div className="results-hero">
-            <div className="results-score">{Math.round(s.lastResult.score / s.lastResult.total * 100)}%</div>
-            <div className="results-label">
-              {s.lastResult.score === s.lastResult.total ? "Perfect score! 🎉" :
-               s.lastResult.score / s.lastResult.total >= 0.8 ? "Great job! 🌟" :
-               s.lastResult.score / s.lastResult.total >= 0.5 ? "Not bad! Keep going 💪" : "Keep practicing! 📚"}
+      {/* Results */}
+      {s.page === "results" && s.lastRes && (
+        <div className="pg">
+          <div className="rh">
+            <div className="rs">{Math.round(s.lastRes.score/s.lastRes.total*100)}%</div>
+            <div className="rl">
+              {s.lastRes.score===s.lastRes.total?"Perfect! 🎉":s.lastRes.score/s.lastRes.total>=.8?"Great job! 🌟":s.lastRes.score/s.lastRes.total>=.5?"Not bad! 💪":"Keep practicing! 📚"}
             </div>
-            <div className="results-stats">
-              <div className="stat-chip"><span className="stat-num" style={{ color: "var(--success)" }}>{s.lastResult.score}</span> Correct</div>
-              <div className="stat-chip"><span className="stat-num" style={{ color: "var(--error)" }}>{s.lastResult.total - s.lastResult.score}</span> Wrong</div>
-              <div className="stat-chip"><span className="stat-num">{s.lastResult.total}</span> Total</div>
+            <div className="rst">
+              <div className="sc"><b style={{color:"var(--ok)"}}>{s.lastRes.score}</b>Correct</div>
+              <div className="sc"><b style={{color:"var(--err)"}}>{s.lastRes.total-s.lastRes.score}</b>Wrong</div>
+              <div className="sc"><b>{s.lastRes.total}</b>Total</div>
             </div>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-              <button className="btn btn-primary" onClick={() => startQuiz(s.currentGroup)}>Retry This Quiz</button>
-              <button className="btn" onClick={() => set({ page: "home" })}>Choose Another</button>
+            <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+              <button className="b bp" onClick={()=>startQuiz(s.curGroup)}>Retry</button>
+              <button className="b" onClick={()=>set({page:"home"})}>Choose Another</button>
             </div>
           </div>
-          {s.lastResult.wrong.length > 0 && (
+          {s.lastRes.wrong.length > 0 && (
             <div>
-              <div style={{ fontSize: 18, fontFamily: "var(--font-display)", fontWeight: 600, marginBottom: 16 }}>Questions You Missed</div>
-              {s.lastResult.wrong.map((w, i) => (
-                <div key={i} className="wrong-item">
-                  <div className="wrong-item-q">{w.text}</div>
-                  <div className="wrong-item-detail">
-                    Your answer: <span className="wrong-answer">{w.yourAnswer}</span>{" · "}Correct: <span className="right-answer">{w.correctAnswer}</span>
+              <div style={{fontSize:18,fontFamily:"var(--fd)",fontWeight:600,marginBottom:16}}>Questions You Missed</div>
+              {s.lastRes.wrong.map((w,i) => (
+                <div key={i} className="wi">
+                  <div style={{fontWeight:600,marginBottom:8,fontSize:15}}>{w.text}</div>
+                  <div style={{fontSize:13,color:"var(--t2)"}}>
+                    Your answer: <span style={{color:"var(--err)",fontWeight:600}}>{w.yours}</span>{" · "}Correct: <span style={{color:"var(--ok)",fontWeight:600}}>{w.correct}</span>
                   </div>
-                  {w.explanation && <div style={{ marginTop: 8, fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>{w.explanation}</div>}
+                  {w.explanation && <div style={{marginTop:8,fontSize:13,color:"var(--t3)",fontStyle:"italic"}}>{w.explanation}</div>}
                 </div>
               ))}
             </div>
@@ -974,253 +625,193 @@ export default function QuizApp() {
         </div>
       )}
 
-      {/* ── History ── */}
+      {/* History */}
       {s.page === "history" && (
-        <div className="page">
-          <div className="section-title">Quiz History</div>
-          <p className="section-subtitle">Your past quiz attempts and scores.</p>
-          {s.history.length === 0 ? (
-            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40 }}>No quiz history yet. Take a quiz!</div>
-          ) : s.history.map((h, i) => (
-            <div key={i} className="history-item">
+        <div className="pg">
+          <div className="st">Quiz History</div>
+          <p className="ss">Your past attempts and scores.</p>
+          {s.history.length===0 ? <div style={{textAlign:"center",color:"var(--t3)",padding:40}}>No history yet. Take a quiz!</div> :
+           s.history.map((h,i) => (
+            <div key={i} className="hi">
               <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{h.groupName}</div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {new Date(h.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                </div>
+                <div style={{fontWeight:600,marginBottom:4}}>{h.group_name}</div>
+                <div style={{fontSize:12,color:"var(--t3)"}}>{new Date(h.created_at).toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
               </div>
-              <span className={`badge ${h.score / h.total >= 0.8 ? "badge-success" : h.score / h.total >= 0.5 ? "badge-warning" : "badge-error"}`}>
-                {h.score}/{h.total} ({Math.round(h.score / h.total * 100)}%)
+              <span className={`badge ${h.score/h.total>=.8?"bgs":h.score/h.total>=.5?"bgw":"bge"}`}>
+                {h.score}/{h.total} ({Math.round(h.score/h.total*100)}%)
               </span>
             </div>
           ))}
         </div>
       )}
 
-      {/* ── Admin ── */}
-      {s.page === "admin" && s.user?.isAdmin && (
-        <div className="page page-wide">
-          <div className="section-title">Admin Panel</div>
-          <p className="section-subtitle">Manage quiz groups, questions, and users.</p>
+      {/* Profile */}
+      {s.page === "profile" && (
+        <div className="pg" style={{maxWidth:500}}>
+          <div className="st">Profile</div>
+          <p className="ss">Manage your account settings.</p>
+          <div className="c" style={{marginBottom:24}}>
+            <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:24}}>
+              <div className="ua" style={{width:56,height:56,fontSize:22}}>{s.user?.username?.[0]?.toUpperCase()}</div>
+              <div>
+                <div style={{fontWeight:600,fontSize:18}}>{s.user?.username}</div>
+                <div style={{fontSize:13,color:"var(--t3)"}}>
+                  {s.user?.is_admin && <span className="badge bga" style={{marginRight:8}}>Admin</span>}
+                  Joined {new Date(s.user?.created_at).toLocaleDateString()}
+                </div>
+              </div>
+            </div>
+            <div style={{fontSize:14,color:"var(--t2)"}}>
+              Quizzes taken: <strong>{s.history.length}</strong>
+              {s.history.length > 0 && <> · Average: <strong>{Math.round(s.history.reduce((a,h)=>a+h.score/h.total*100,0)/s.history.length)}%</strong></>}
+            </div>
+          </div>
+          <div className="c">
+            <div style={{fontSize:16,fontWeight:600,marginBottom:16,display:"flex",alignItems:"center",gap:8}}><I.Key/> Change Password</div>
+            <div className="ig"><label className="lbl">Current Password</label>
+              <input className="inp" type="password" value={cpf.old} onChange={e=>setCpf(f=>({...f,old:e.target.value}))} placeholder="Enter current password"/>
+            </div>
+            <div className="ig"><label className="lbl">New Password</label>
+              <input className="inp" type="password" value={cpf.new1} onChange={e=>setCpf(f=>({...f,new1:e.target.value}))} placeholder="Enter new password"/>
+            </div>
+            <div className="ig"><label className="lbl">Confirm New Password</label>
+              <input className="inp" type="password" value={cpf.new2} onChange={e=>setCpf(f=>({...f,new2:e.target.value}))} placeholder="Confirm new password"/>
+            </div>
+            <button className="b bp" onClick={changePw}>Update Password</button>
+          </div>
+        </div>
+      )}
 
-          <div className="tabs" style={{ maxWidth: 600 }}>
-            <button className={`tab ${s.adminTab === "groups" ? "active" : ""}`} onClick={() => set({ adminTab: "groups" })}>Groups</button>
-            <button className={`tab ${s.adminTab === "add-group" ? "active" : ""}`} onClick={() => { resetGroupForm(); set({ adminTab: "add-group" }); }}>New Group</button>
-            <button className={`tab ${s.adminTab === "users" ? "active" : ""}`} onClick={() => set({ adminTab: "users" })} style={{ position: "relative" }}>
-              Users {pendingCount > 0 && <span style={{ background: "var(--error)", color: "white", borderRadius: 10, padding: "1px 7px", fontSize: 11, marginLeft: 6 }}>{pendingCount}</span>}
+      {/* Admin */}
+      {s.page === "admin" && s.user?.is_admin && (
+        <div className="pg pw">
+          <div className="st">Admin Panel</div>
+          <p className="ss">Manage groups, questions, and users.</p>
+          <div className="tabs" style={{maxWidth:600}}>
+            <button className={`tab ${s.adminTab==="groups"?"act":""}`} onClick={()=>set({adminTab:"groups"})}>Groups</button>
+            <button className={`tab ${s.adminTab==="add"?"act":""}`} onClick={()=>{setGf({name:"",description:"",icon:"📝"});set({adminTab:"add"});}}>New Group</button>
+            <button className={`tab ${s.adminTab==="users"?"act":""}`} onClick={()=>{loadUsers();set({adminTab:"users"});}}>
+              Users {pendingN>0&&<span style={{background:"var(--err)",color:"#fff",borderRadius:10,padding:"1px 7px",fontSize:11,marginLeft:6}}>{pendingN}</span>}
             </button>
           </div>
 
-          {/* ── Users Tab ── */}
+          {/* Users */}
           {s.adminTab === "users" && (
             <div>
-              {/* Pending Users */}
-              {pendingUsers.length > 0 && (
-                <div style={{ marginBottom: 32 }}>
-                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: "var(--warning)", display: "flex", alignItems: "center", gap: 8 }}>
-                    <Icons.Clock /> Pending Approval ({pendingUsers.length})
-                  </div>
-                  {pendingUsers.map(u => (
-                    <div key={u.username} className="user-row" style={{ borderColor: "var(--warning)", borderStyle: "dashed" }}>
-                      <div className="user-info">
-                        <div className="user-avatar">{u.displayName?.[0]?.toUpperCase()}</div>
+              {s.users.filter(u=>u.status==="pending").length > 0 && (
+                <div style={{marginBottom:32}}>
+                  <div style={{fontSize:16,fontWeight:600,marginBottom:12,color:"var(--wrn)"}}>Pending Approval</div>
+                  {s.users.filter(u=>u.status==="pending").map(u => (
+                    <div key={u.id} className="ur" style={{borderColor:"var(--wrn)",borderStyle:"dashed"}}>
+                      <div className="ui">
+                        <div className="ua">{u.username[0].toUpperCase()}</div>
                         <div>
-                          <div style={{ fontWeight: 600 }}>{u.displayName}</div>
-                          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>@{u.username} · Signed up {new Date(u.createdAt).toLocaleDateString()}</div>
+                          <div style={{fontWeight:600}}>{u.username}</div>
+                          <div style={{fontSize:12,color:"var(--t3)"}}>Signed up {new Date(u.created_at).toLocaleDateString()}</div>
                         </div>
                       </div>
-                      <div className="user-actions">
-                        <button className="btn btn-sm btn-success" onClick={() => updateUserStatus(u.username, "approved")}>
-                          <Icons.CheckCircle /> Approve
-                        </button>
-                        <button className="btn btn-sm btn-danger" onClick={() => updateUserStatus(u.username, "banned")}>
-                          <Icons.Ban /> Reject
-                        </button>
+                      <div style={{display:"flex",gap:4}}>
+                        <button className="b bs bk" onClick={()=>setUserStatus(u.id,"approved")}><I.CheckC/> Approve</button>
+                        <button className="b bs bd" onClick={()=>setUserStatus(u.id,"banned")}><I.Ban/> Reject</button>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
-
-              {/* All Users */}
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>All Users ({Object.keys(s.users).length})</div>
-              {Object.values(s.users).sort((a, b) => (b.isAdmin ? 1 : 0) - (a.isAdmin ? 1 : 0)).map(u => {
-                const stats = getUserStats(u.username);
-                return (
-                  <div key={u.username} className="user-row">
-                    <div className="user-info">
-                      <div className="user-avatar" style={{ background: u.isAdmin ? "var(--accent-soft)" : undefined, color: u.isAdmin ? "var(--accent)" : undefined }}>
-                        {u.displayName?.[0]?.toUpperCase()}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
-                          {u.displayName}
-                          {u.isAdmin && <span className="badge badge-accent">Admin</span>}
-                          {u.status === "pending" && <span className="badge badge-warning">Pending</span>}
-                          {u.status === "banned" && <span className="badge badge-error">Banned</span>}
-                        </div>
-                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>@{u.username}</div>
-                      </div>
-                    </div>
-                    <div className="user-stats">
-                      <span><strong>{stats.quizzes}</strong> quizzes</span>
-                      <span>Avg: <strong>{stats.avgScore}%</strong></span>
-                      <span>Best: <strong>{stats.bestScore}%</strong></span>
-                    </div>
-                    <div className="user-actions">
-                      {u.username !== s.user.username && (
-                        <>
-                          {u.status === "pending" && (
-                            <button className="btn btn-sm btn-success" onClick={() => updateUserStatus(u.username, "approved")}>
-                              <Icons.CheckCircle />
-                            </button>
-                          )}
-                          {u.status !== "banned" ? (
-                            <button className="btn btn-sm btn-ghost" onClick={() => updateUserStatus(u.username, "banned")} title="Ban user">
-                              <Icons.Ban />
-                            </button>
-                          ) : (
-                            <button className="btn btn-sm btn-ghost btn-success" onClick={() => updateUserStatus(u.username, "approved")} title="Unban user">
-                              <Icons.CheckCircle />
-                            </button>
-                          )}
-                          <button className="btn btn-sm btn-ghost" onClick={() => toggleAdmin(u.username)} title={u.isAdmin ? "Remove admin" : "Make admin"}>
-                            <Icons.Shield />
-                          </button>
-                          <button className="btn btn-sm btn-ghost btn-danger" onClick={() => set({ showModal: { type: "delete-user", username: u.username, name: u.displayName } })} title="Delete user">
-                            <Icons.Trash />
-                          </button>
-                        </>
-                      )}
-                      {u.username === s.user.username && (
-                        <span style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>You</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              <div style={{fontSize:16,fontWeight:600,marginBottom:12}}>All Users ({s.users.length})</div>
+              {s.users.map(u => (
+                <UserRow key={u.id} u={u} me={s.user} onStatus={setUserStatus} onToggleAdmin={toggleAdmin}
+                  onDelete={(id,name)=>set({modal:{type:"del-user",id,name}})}
+                  onResetPw={(id,name)=>{setNewPw("");set({modal:{type:"reset-pw",id,name}});}} />
+              ))}
             </div>
           )}
 
-          {/* ── Groups Tab ── */}
+          {/* Groups */}
           {s.adminTab === "groups" && (
             <div>
               {s.groups.map(g => (
-                <div key={g.id} className="admin-group-item">
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: 24 }}>{g.icon}</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600 }}>{g.name}</div>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{g.questions.length} questions</div>
-                    </div>
+                <div key={g.id} className="agi">
+                  <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>
+                    <span style={{fontSize:24}}>{g.icon}</span>
+                    <div><div style={{fontWeight:600}}>{g.name}</div><div style={{fontSize:12,color:"var(--t3)"}}>{(s.questions[g.id]||[]).length} questions</div></div>
                   </div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button className="btn btn-ghost btn-icon btn-sm" onClick={() => set({ editingGroup: g.id, adminTab: "edit-group" })}><Icons.Edit /></button>
-                    <button className="btn btn-ghost btn-icon btn-sm btn-danger" onClick={() => set({ showModal: { type: "delete-group", groupId: g.id, name: g.name } })}><Icons.Trash /></button>
+                  <div style={{display:"flex",gap:4}}>
+                    <button className="b bg bi bs" onClick={()=>set({editGroup:g.id,adminTab:"edit"})}><I.Edit/></button>
+                    <button className="b bg bi bs bd" onClick={()=>set({modal:{type:"del-group",id:g.id,name:g.name}})}><I.Trash/></button>
                   </div>
                 </div>
               ))}
-              {s.groups.length === 0 && <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40 }}>No groups yet.</div>}
             </div>
           )}
 
-          {/* ── Add Group ── */}
-          {s.adminTab === "add-group" && (
-            <div className="card">
-              <div style={{ fontSize: 18, fontFamily: "var(--font-display)", fontWeight: 600, marginBottom: 20 }}>Create New Group</div>
-              <div className="input-group">
-                <label className="input-label">Icon (emoji)</label>
-                <input className="input" value={groupForm.icon} onChange={e => setGroupForm(f => ({ ...f, icon: e.target.value }))} style={{ width: 80 }} />
-              </div>
-              <div className="input-group">
-                <label className="input-label">Group Name</label>
-                <input className="input" placeholder="e.g., Mathematics" value={groupForm.name} onChange={e => setGroupForm(f => ({ ...f, name: e.target.value }))} />
-              </div>
-              <div className="input-group">
-                <label className="input-label">Description</label>
-                <textarea className="textarea" placeholder="Brief description..." value={groupForm.description} onChange={e => setGroupForm(f => ({ ...f, description: e.target.value }))} />
-              </div>
-              <button className="btn btn-primary" onClick={addGroup}><Icons.Plus /> Create Group</button>
+          {/* Add Group */}
+          {s.adminTab === "add" && (
+            <div className="c">
+              <div style={{fontSize:18,fontFamily:"var(--fd)",fontWeight:600,marginBottom:20}}>Create New Group</div>
+              <div className="ig"><label className="lbl">Icon</label><input className="inp" value={gf.icon} onChange={e=>setGf(f=>({...f,icon:e.target.value}))} style={{width:80}}/></div>
+              <div className="ig"><label className="lbl">Name</label><input className="inp" placeholder="e.g., Mathematics" value={gf.name} onChange={e=>setGf(f=>({...f,name:e.target.value}))}/></div>
+              <div className="ig"><label className="lbl">Description</label><textarea className="ta" placeholder="Brief description..." value={gf.description} onChange={e=>setGf(f=>({...f,description:e.target.value}))}/></div>
+              <button className="b bp" onClick={addGroup}><I.Plus/> Create Group</button>
             </div>
           )}
 
-          {/* ── Edit Group ── */}
-          {s.adminTab === "edit-group" && s.editingGroup && (() => {
-            const g = s.groups.find(x => x.id === s.editingGroup);
-            if (!g) return null;
+          {/* Edit Group */}
+          {s.adminTab === "edit" && s.editGroup && (() => {
+            const g = s.groups.find(x=>x.id===s.editGroup);
+            if(!g) return null;
+            const qs = s.questions[g.id] || [];
             return (
               <div>
-                <button className="btn btn-ghost btn-sm" onClick={() => set({ adminTab: "groups", editingGroup: null })} style={{ marginBottom: 16 }}>
-                  <Icons.Arrow dir="left" /> Back to Groups
-                </button>
-                <div className="card" style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 18, fontFamily: "var(--font-display)", fontWeight: 600, marginBottom: 20 }}>Edit Group: {g.name}</div>
-                  <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-                    <div style={{ width: 80 }}>
-                      <label className="input-label">Icon</label>
-                      <input className="input" value={g.icon} onChange={e => updateGroup(g.id, { icon: e.target.value })} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 200 }}>
-                      <label className="input-label">Name</label>
-                      <input className="input" value={g.name} onChange={e => updateGroup(g.id, { name: e.target.value })} />
-                    </div>
+                <button className="b bg bs" onClick={()=>set({adminTab:"groups",editGroup:null})} style={{marginBottom:16}}><I.Arr d="l"/> Back</button>
+                <div className="c" style={{marginBottom:24}}>
+                  <div style={{fontSize:18,fontFamily:"var(--fd)",fontWeight:600,marginBottom:20}}>Edit: {g.name}</div>
+                  <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
+                    <div style={{width:80}}><label className="lbl">Icon</label><input className="inp" value={g.icon} onChange={e=>updGroup(g.id,{icon:e.target.value})}/></div>
+                    <div style={{flex:1,minWidth:200}}><label className="lbl">Name</label><input className="inp" value={g.name} onChange={e=>updGroup(g.id,{name:e.target.value})}/></div>
                   </div>
-                  <div className="input-group">
-                    <label className="input-label">Description</label>
-                    <textarea className="textarea" value={g.description} onChange={e => updateGroup(g.id, { description: e.target.value })} />
-                  </div>
+                  <div className="ig"><label className="lbl">Description</label><textarea className="ta" value={g.description} onChange={e=>updGroup(g.id,{description:e.target.value})}/></div>
                 </div>
-                <div className="card" style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Questions ({g.questions.length})</div>
-                  {g.questions.map((q, qi) => (
-                    <div key={q.id} className="admin-q-item">
-                      <span className="admin-q-text">{qi + 1}. {q.text}</span>
-                      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                        <button className="btn btn-ghost btn-icon btn-sm" onClick={() => {
-                          setQForm({ text: q.text, options: [...q.options], correct: q.correct, explanation: q.explanation || "" });
-                          set({ editingQuestion: q.id, showModal: { type: "edit-question", groupId: g.id } });
-                        }}><Icons.Edit /></button>
-                        <button className="btn btn-ghost btn-icon btn-sm btn-danger" onClick={() => deleteQuestion(g.id, q.id)}><Icons.Trash /></button>
+                <div className="c" style={{marginBottom:24}}>
+                  <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>Questions ({qs.length})</div>
+                  {qs.map((q,qi) => (
+                    <div key={q.id} className="aqi">
+                      <span className="aqt">{qi+1}. {q.text}</span>
+                      <div style={{display:"flex",gap:4,flexShrink:0}}>
+                        <button className="b bg bi bs" onClick={()=>{
+                          const o = getOpts(q);
+                          setQf({text:q.text,options:[...o],correct:q.correct,explanation:q.explanation||""});
+                          set({editQ:q.id,modal:{type:"edit-q",gid:g.id}});
+                        }}><I.Edit/></button>
+                        <button className="b bg bi bs bd" onClick={()=>delQ(q.id)}><I.Trash/></button>
                       </div>
                     </div>
                   ))}
-                  {g.questions.length === 0 && <div style={{ color: "var(--text-muted)", fontSize: 14 }}>No questions yet.</div>}
+                  {qs.length===0 && <div style={{color:"var(--t3)",fontSize:14}}>No questions yet.</div>}
                 </div>
-                <div className="card" style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Add Question</div>
-                  <div className="input-group">
-                    <label className="input-label">Question</label>
-                    <textarea className="textarea" placeholder="Enter the question..." value={qForm.text}
-                      onChange={e => setQForm(f => ({ ...f, text: e.target.value }))} />
-                  </div>
-                  {qForm.options.map((opt, i) => (
-                    <div className="input-group" key={i}>
-                      <label className="input-label">
-                        Option {letters[i]} {qForm.correct === i && <span style={{ color: "var(--success)", marginLeft: 8 }}>✓ Correct</span>}
-                      </label>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input className="input" placeholder={`Option ${letters[i]}`} value={opt}
-                          onChange={e => { const o = [...qForm.options]; o[i] = e.target.value; setQForm(f => ({ ...f, options: o })); }} />
-                        <button className={`btn btn-sm ${qForm.correct === i ? "btn-primary" : ""}`}
-                          onClick={() => setQForm(f => ({ ...f, correct: i }))}>{qForm.correct === i ? "✓" : "Set Correct"}</button>
+                <div className="c" style={{marginBottom:24}}>
+                  <div style={{fontSize:16,fontWeight:600,marginBottom:16}}>Add Question</div>
+                  <div className="ig"><label className="lbl">Question</label><textarea className="ta" placeholder="Enter question..." value={qf.text} onChange={e=>setQf(f=>({...f,text:e.target.value}))}/></div>
+                  {qf.options.map((opt,i) => (
+                    <div className="ig" key={i}>
+                      <label className="lbl">Option {letters[i]} {qf.correct===i&&<span style={{color:"var(--ok)",marginLeft:8}}>✓ Correct</span>}</label>
+                      <div style={{display:"flex",gap:8}}>
+                        <input className="inp" placeholder={`Option ${letters[i]}`} value={opt} onChange={e=>{const o=[...qf.options];o[i]=e.target.value;setQf(f=>({...f,options:o}));}}/>
+                        <button className={`b bs ${qf.correct===i?"bp":""}`} onClick={()=>setQf(f=>({...f,correct:i}))}>{qf.correct===i?"✓":"Set"}</button>
                       </div>
                     </div>
                   ))}
-                  <div className="input-group">
-                    <label className="input-label">Explanation (optional)</label>
-                    <textarea className="textarea" placeholder="Why this is the correct answer..." value={qForm.explanation}
-                      onChange={e => setQForm(f => ({ ...f, explanation: e.target.value }))} />
-                  </div>
-                  <button className="btn btn-primary" onClick={() => addQuestion(g.id)}><Icons.Plus /> Add Question</button>
+                  <div className="ig"><label className="lbl">Explanation (optional)</label><textarea className="ta" placeholder="Why..." value={qf.explanation} onChange={e=>setQf(f=>({...f,explanation:e.target.value}))}/></div>
+                  <button className="b bp" onClick={()=>addQ(g.id)}><I.Plus/> Add Question</button>
                 </div>
-                <div className="card">
-                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Bulk Import</div>
-                  <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16, lineHeight: 1.5 }}>
-                    Paste questions (7 lines each): Question → A. Option → B. Option → C. Option → D. Option → Answer letter → Explanation
+                <div className="c">
+                  <div style={{fontSize:16,fontWeight:600,marginBottom:8}}>Bulk Import</div>
+                  <p style={{fontSize:13,color:"var(--t2)",marginBottom:16,lineHeight:1.5}}>
+                    7 lines per question: Question → A. Option → B. Option → C. Option → D. Option → Answer letter → Explanation
                   </p>
-                  <textarea className="textarea" style={{ minHeight: 140 }} placeholder={`What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6\nB\nTwo plus two equals four.`}
-                    value={bulkText} onChange={e => setBulkText(e.target.value)} />
-                  <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => importBulk(g.id)}><Icons.Upload /> Import</button>
+                  <textarea className="ta" style={{minHeight:140}} value={bulk} onChange={e=>setBulk(e.target.value)}
+                    placeholder={"What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6\nB\nTwo plus two equals four."}/>
+                  <button className="b bp" style={{marginTop:12}} onClick={()=>importBulk(g.id)}><I.Upload/> Import</button>
                 </div>
               </div>
             );
@@ -1228,74 +819,103 @@ export default function QuizApp() {
         </div>
       )}
 
-      {/* ── Modals ── */}
-      {s.showModal?.type === "delete-group" && (
-        <div className="modal-overlay" onClick={() => set({ showModal: null })}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">Delete "{s.showModal.name}"?</div>
-            <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6 }}>
-              This will permanently delete this group and all its questions.
-            </p>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => set({ showModal: null })}>Cancel</button>
-              <button className="btn btn-danger" onClick={() => deleteGroup(s.showModal.groupId)}>Delete</button>
-            </div>
-          </div>
-        </div>
+      {/* Modals */}
+      {s.modal?.type === "del-group" && (
+        <div className="mo" onClick={()=>set({modal:null})}><div className="md" onClick={e=>e.stopPropagation()}>
+          <div className="mt">Delete "{s.modal.name}"?</div>
+          <p style={{color:"var(--t2)",fontSize:14}}>This permanently deletes this group and all questions.</p>
+          <div className="ma"><button className="b" onClick={()=>set({modal:null})}>Cancel</button><button className="b bd" onClick={()=>delGroup(s.modal.id)}>Delete</button></div>
+        </div></div>
       )}
-
-      {s.showModal?.type === "delete-user" && (
-        <div className="modal-overlay" onClick={() => set({ showModal: null })}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">Delete user "{s.showModal.name}"?</div>
-            <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6 }}>
-              This will permanently delete this user and all their quiz history.
-            </p>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => set({ showModal: null })}>Cancel</button>
-              <button className="btn btn-danger" onClick={() => deleteUser(s.showModal.username)}>Delete User</button>
-            </div>
-          </div>
-        </div>
+      {s.modal?.type === "del-user" && (
+        <div className="mo" onClick={()=>set({modal:null})}><div className="md" onClick={e=>e.stopPropagation()}>
+          <div className="mt">Delete "{s.modal.name}"?</div>
+          <p style={{color:"var(--t2)",fontSize:14}}>This permanently deletes this user and all their history.</p>
+          <div className="ma"><button className="b" onClick={()=>set({modal:null})}>Cancel</button><button className="b bd" onClick={()=>deleteUser(s.modal.id)}>Delete</button></div>
+        </div></div>
       )}
-
-      {s.showModal?.type === "edit-question" && (
-        <div className="modal-overlay" onClick={() => { set({ showModal: null, editingQuestion: null }); resetQForm(); }}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">Edit Question</div>
-            <div className="input-group">
-              <label className="input-label">Question</label>
-              <textarea className="textarea" value={qForm.text} onChange={e => setQForm(f => ({ ...f, text: e.target.value }))} />
-            </div>
-            {qForm.options.map((opt, i) => (
-              <div className="input-group" key={i}>
-                <label className="input-label">
-                  Option {letters[i]} {qForm.correct === i && <span style={{ color: "var(--success)", marginLeft: 8 }}>✓ Correct</span>}
-                </label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input className="input" value={opt} onChange={e => { const o = [...qForm.options]; o[i] = e.target.value; setQForm(f => ({ ...f, options: o })); }} />
-                  <button className={`btn btn-sm ${qForm.correct === i ? "btn-primary" : ""}`}
-                    onClick={() => setQForm(f => ({ ...f, correct: i }))}>{qForm.correct === i ? "✓" : "Set"}</button>
-                </div>
+      {s.modal?.type === "reset-pw" && (
+        <div className="mo" onClick={()=>set({modal:null})}><div className="md" onClick={e=>e.stopPropagation()}>
+          <div className="mt">Reset password for "{s.modal.name}"</div>
+          <div className="ig"><label className="lbl">New Password</label>
+            <input className="inp" type="text" value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="Enter new password"/>
+          </div>
+          <p style={{fontSize:12,color:"var(--t3)"}}> This will log the user out of all sessions.</p>
+          <div className="ma"><button className="b" onClick={()=>set({modal:null})}>Cancel</button><button className="b bp" onClick={()=>resetUserPw(s.modal.id)}>Reset</button></div>
+        </div></div>
+      )}
+      {s.modal?.type === "edit-q" && (
+        <div className="mo" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}><div className="md" onClick={e=>e.stopPropagation()}>
+          <div className="mt">Edit Question</div>
+          <div className="ig"><label className="lbl">Question</label><textarea className="ta" value={qf.text} onChange={e=>setQf(f=>({...f,text:e.target.value}))}/></div>
+          {qf.options.map((opt,i) => (
+            <div className="ig" key={i}><label className="lbl">Option {letters[i]} {qf.correct===i&&<span style={{color:"var(--ok)",marginLeft:8}}>✓</span>}</label>
+              <div style={{display:"flex",gap:8}}>
+                <input className="inp" value={opt} onChange={e=>{const o=[...qf.options];o[i]=e.target.value;setQf(f=>({...f,options:o}));}}/>
+                <button className={`b bs ${qf.correct===i?"bp":""}`} onClick={()=>setQf(f=>({...f,correct:i}))}>{qf.correct===i?"✓":"Set"}</button>
               </div>
-            ))}
-            <div className="input-group">
-              <label className="input-label">Explanation</label>
-              <textarea className="textarea" value={qForm.explanation} onChange={e => setQForm(f => ({ ...f, explanation: e.target.value }))} />
             </div>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => { set({ showModal: null, editingQuestion: null }); resetQForm(); }}>Cancel</button>
-              <button className="btn btn-primary" onClick={() => {
-                updateQuestion(s.showModal.groupId, s.editingQuestion, { ...qForm });
-                set({ showModal: null, editingQuestion: null }); resetQForm();
-              }}>Save</button>
-            </div>
+          ))}
+          <div className="ig"><label className="lbl">Explanation</label><textarea className="ta" value={qf.explanation} onChange={e=>setQf(f=>({...f,explanation:e.target.value}))}/></div>
+          <div className="ma">
+            <button className="b" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}>Cancel</button>
+            <button className="b bp" onClick={()=>{updQ(s.editQ,{text:qf.text,options:qf.options,correct:qf.correct,explanation:qf.explanation});set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}>Save</button>
           </div>
-        </div>
+        </div></div>
       )}
 
-      {/* ── Toast ── */}
-      {s.toast && <div className={`toast toast-${s.toast.type}`}>{s.toast.msg}</div>}
+      {/* Toast */}
+      {s.toast && <div className={`toast toast-${s.toast.t}`}>{s.toast.m}</div>}
+    </div>
+  );
+}
+
+// ─── User Row Component ───
+function UserRow({ u, me, onStatus, onToggleAdmin, onDelete, onResetPw }) {
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("attempts").select("score, total").eq("user_id", u.id);
+      if (data && data.length > 0) {
+        const scores = data.map(a => Math.round(a.score / a.total * 100));
+        setStats({ n: data.length, avg: Math.round(scores.reduce((a,b)=>a+b,0)/scores.length), best: Math.max(...scores) });
+      } else setStats({ n: 0, avg: 0, best: 0 });
+    })();
+  }, [u.id]);
+
+  return (
+    <div className="ur">
+      <div className="ui">
+        <div className="ua" style={u.is_admin?{background:"var(--acs)",color:"var(--ac)"}:{}}>{u.username[0].toUpperCase()}</div>
+        <div>
+          <div style={{fontWeight:600,display:"flex",alignItems:"center",gap:8}}>
+            {u.username}
+            {u.is_admin && <span className="badge bga">Admin</span>}
+            {u.status==="pending" && <span className="badge bgw">Pending</span>}
+            {u.status==="banned" && <span className="badge bge">Banned</span>}
+          </div>
+          <div style={{fontSize:12,color:"var(--t3)"}}>Joined {new Date(u.created_at).toLocaleDateString()}</div>
+        </div>
+      </div>
+      <div className="us">
+        {stats && <>
+          <span><strong>{stats.n}</strong> quizzes</span>
+          <span>Avg: <strong>{stats.avg}%</strong></span>
+          <span>Best: <strong>{stats.best}%</strong></span>
+        </>}
+      </div>
+      <div style={{display:"flex",gap:4}}>
+        {u.id !== me.id ? (
+          <>
+            {u.status==="pending" && <button className="b bs bk" onClick={()=>onStatus(u.id,"approved")}><I.CheckC/></button>}
+            {u.status!=="banned" ? <button className="b bg bi bs" onClick={()=>onStatus(u.id,"banned")} title="Ban"><I.Ban/></button>
+             : <button className="b bg bi bs bk" onClick={()=>onStatus(u.id,"approved")} title="Unban"><I.CheckC/></button>}
+            <button className="b bg bi bs" onClick={()=>onToggleAdmin(u.id,u.is_admin)} title={u.is_admin?"Remove admin":"Make admin"}><I.Shield/></button>
+            <button className="b bg bi bs" onClick={()=>onResetPw(u.id,u.username)} title="Reset password"><I.Key/></button>
+            <button className="b bg bi bs bd" onClick={()=>onDelete(u.id,u.username)} title="Delete"><I.Trash/></button>
+          </>
+        ) : <span style={{fontSize:12,color:"var(--t3)",fontStyle:"italic"}}>You</span>}
+      </div>
     </div>
   );
 }
