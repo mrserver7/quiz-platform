@@ -40,6 +40,7 @@ const I = {
   Key: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
   File: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
   Download: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  Img: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
 };
 
 // ─── Styles ───
@@ -139,6 +140,12 @@ body{font-family:var(--fb);background:var(--bg0);color:var(--t1);min-height:100v
 .aqt{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .agi{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-radius:var(--r);background:var(--bg1);border:1px solid var(--bd);margin-bottom:8px;gap:12px}
 .pct-bar{height:6px;border-radius:3px;background:var(--bg2);overflow:hidden;margin-top:4px}.pct-fill{height:100%;border-radius:3px;transition:width .3s}
+.icon-up{width:80px;height:80px;border-radius:var(--r);border:2px dashed var(--bd);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all var(--tr);overflow:hidden;background:var(--bg2);flex-shrink:0}
+.icon-up:hover{border-color:var(--ac);background:var(--acs)}
+.icon-up img{width:100%;height:100%;object-fit:cover}
+.prog-wrap{margin-top:auto;padding-top:16px}
+.prog-bar{height:6px;border-radius:3px;background:var(--bg3);overflow:hidden}.prog-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--ac),#a78bfa);transition:width .4s}
+.prog-txt{display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-top:6px;font-weight:500}
 @media(max-width:640px){.nav{padding:12px 16px}.logo{font-size:18px}.pg{padding:24px 16px}.st{font-size:24px}.qq{font-size:20px}.rs{font-size:56px}.gg{grid-template-columns:1fr}.md{padding:24px}.ur{flex-direction:column;align-items:flex-start}}
 `;
 
@@ -161,7 +168,7 @@ export default function QuizApp() {
 
   const [lf, setLf] = useState({ u: "", p: "", p2: "", signup: false, remember: false });
   const [gf, setGf] = useState({ name: "", description: "", icon: "📝" });
-  const [qf, setQf] = useState({ text: "", options: ["","","",""], correct: 0, explanation: "" });
+  const [qf, setQf] = useState({ text: "", options: ["","","",""], correct: 0 });
   const [bulk, setBulk] = useState("");
   const [newPw, setNewPw] = useState("");
   const letters = ["A","B","C","D"];
@@ -327,7 +334,7 @@ export default function QuizApp() {
     qs.forEach(q => {
       const opts = typeof q.options === "string" ? JSON.parse(q.options) : q.options;
       if (s.ans[q.id] === q.correct) score++;
-      else wrong.push({ text: q.text, yours: opts[s.ans[q.id]] || "Skipped", correct: opts[q.correct], explanation: q.explanation });
+      else wrong.push({ text: q.text, yours: opts[s.ans[q.id]] || "Skipped", correct: opts[q.correct] });
     });
     const { data: attempt } = await supabase.from("attempts").insert({
       user_id: s.user.id, group_id: s.curGroup.id, group_name: s.curGroup.name,
@@ -338,6 +345,23 @@ export default function QuizApp() {
   };
 
   // ─── Admin: Groups ───
+  const iconInputRef = useRef(null);
+  const [iconUploading, setIconUploading] = useState(false);
+
+  const uploadIcon = async (file, callback) => {
+    if (!file) return;
+    setIconUploading(true);
+    try {
+      const ext = file.name.split(".").pop();
+      const name = `group-${Date.now()}.${ext}`;
+      const { data, error } = await supabase.storage.from("icons").upload(name, file, { upsert: true });
+      if (error) { toast("Upload failed: " + error.message, "e"); setIconUploading(false); return; }
+      const { data: urlData } = supabase.storage.from("icons").getPublicUrl(name);
+      callback(urlData.publicUrl);
+    } catch (err) { toast("Upload failed", "e"); }
+    setIconUploading(false);
+  };
+
   const addGroup = async () => {
     if (!gf.name.trim()) return toast("Name required", "e");
     await supabase.from("groups").insert({ name: gf.name, description: gf.description, icon: gf.icon });
@@ -355,8 +379,8 @@ export default function QuizApp() {
   // ─── Admin: Questions ───
   const addQ = async (gid) => {
     if (!qf.text.trim() || qf.options.some(o => !o.trim())) return toast("Fill all fields", "e");
-    await supabase.from("questions").insert({ group_id: gid, text: qf.text, options: qf.options, correct: qf.correct, explanation: qf.explanation });
-    setQf({ text: "", options: ["","","",""], correct: 0, explanation: "" }); loadGroups(); toast("Question added!");
+    await supabase.from("questions").insert({ group_id: gid, text: qf.text, options: qf.options, correct: qf.correct });
+    setQf({ text: "", options: ["","","",""], correct: 0 }); loadGroups(); toast("Question added!");
   };
   const updQ = async (id, u) => {
     await supabase.from("questions").update(u).eq("id", id);
@@ -376,9 +400,8 @@ export default function QuizApp() {
         for (let j = 1; j <= 4; j++) if (i+j < lines.length) opts.push(lines[i+j]?.replace(/^[A-D][\.\)]\s*/, "").trim());
         const cl = lines[i+5]?.trim();
         const ci = cl ? "ABCD".indexOf(cl.toUpperCase().replace("ANSWER:","").replace("CORRECT:","").trim()) : 0;
-        const exp = lines[i+6]?.trim() || "";
-        if (text && opts.length === 4) qs.push({ group_id: gid, text, options: opts, correct: Math.max(0,Math.min(ci,3)), explanation: exp });
-        i += 7;
+        if (text && opts.length === 4) qs.push({ group_id: gid, text, options: opts, correct: Math.max(0,Math.min(ci,3)) });
+        i += 6;
       }
       if (qs.length === 0) return toast("No valid questions", "e");
       await supabase.from("questions").insert(qs);
@@ -444,13 +467,10 @@ export default function QuizApp() {
           else if (correctRaw === optD.toUpperCase()) correct = 3;
         }
 
-        const explanation = r["explanation"] || r["explain"] || r["note"] || r["notes"] || "";
-
         parsed.push({
           text: text.trim(),
           options: [optA, optB, optC, optD],
           correct,
-          explanation,
         });
       }
 
@@ -469,7 +489,7 @@ export default function QuizApp() {
   const confirmExcelImport = async (gid) => {
     if (!previewRows || previewRows.length === 0) return;
     const toInsert = previewRows.map(q => ({
-      group_id: gid, text: q.text, options: q.options, correct: q.correct, explanation: q.explanation
+      group_id: gid, text: q.text, options: q.options, correct: q.correct
     }));
     // Supabase has a limit, insert in batches of 50
     for (let i = 0; i < toInsert.length; i += 50) {
@@ -483,9 +503,9 @@ export default function QuizApp() {
 
   const downloadTemplate = () => {
     // Create a simple CSV template (opens in Excel)
-    const headers = "Question,Option A,Option B,Option C,Option D,Correct,Explanation";
-    const example1 = "What is the capital of France?,London,Paris,Berlin,Madrid,B,Paris has been the capital since the 10th century";
-    const example2 = "Which planet is closest to the Sun?,Venus,Mercury,Earth,Mars,B,Mercury orbits closest to the Sun";
+    const headers = "Question,Option A,Option B,Option C,Option D,Correct";
+    const example1 = "What is the capital of France?,London,Paris,Berlin,Madrid,B";
+    const example2 = "Which planet is closest to the Sun?,Venus,Mercury,Earth,Mars,B";
     const csv = [headers, example1, example2].join("\n");
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -602,9 +622,14 @@ export default function QuizApp() {
               const qs = s.questions[g.id] || [];
               const best = s.history.filter(h=>h.group_id===g.id);
               const bestPct = best.length > 0 ? Math.max(...best.map(h=>Math.round(h.score/h.total*100))) : null;
+              const uniqueQs = new Set();
+              best.forEach(h => { if(h.wrong) { const total = h.total; const right = h.score; } });
+              const attempted = best.length;
+              const progressPct = qs.length > 0 ? Math.min(100, Math.round((attempted / Math.max(1, Math.ceil(qs.length / qs.length))) * 100)) : 0;
+              const isUrl = g.icon && (g.icon.startsWith("http") || g.icon.startsWith("data:"));
               return (
-                <div key={g.id} className="c ch gc" onClick={()=>startQuiz(g)}>
-                  <span className="gi">{g.icon}</span>
+                <div key={g.id} className="c ch gc" onClick={()=>startQuiz(g)} style={{display:"flex",flexDirection:"column"}}>
+                  {isUrl ? <img src={g.icon} alt="" style={{width:48,height:48,borderRadius:"var(--rs)",objectFit:"cover",marginBottom:16}}/> : <span className="gi">{g.icon || "📝"}</span>}
                   <div className="gn">{g.name}</div>
                   <div className="gd">{g.description}</div>
                   <div className="gm">
@@ -612,6 +637,15 @@ export default function QuizApp() {
                     <span style={{display:"flex",alignItems:"center",gap:4}}><I.Shuf/> Shuffled</span>
                     {bestPct !== null && <span style={{color:"var(--ok)"}}>Best: {bestPct}%</span>}
                   </div>
+                  {qs.length > 0 && (
+                    <div className="prog-wrap">
+                      <div className="prog-bar"><div className="prog-fill" style={{width:`${attempted > 0 ? Math.min(100, Math.round(bestPct || 0)) : 0}%`}}/></div>
+                      <div className="prog-txt">
+                        <span>{attempted} attempt{attempted!==1?"s":""}</span>
+                        <span>{bestPct !== null ? `${bestPct}% best` : "Not started"}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -655,7 +689,6 @@ export default function QuizApp() {
                 </button>
               );
             })}
-            {s.ans[curQ.id]!==undefined && curQ.explanation && <div className="eb"><strong>Explanation</strong>{curQ.explanation}</div>}
             <div className="qa">
               <button className="b bs" disabled={s.qi===0} onClick={()=>set({qi:s.qi-1})} style={{opacity:s.qi===0?.4:1}}>
                 <I.Arr d="l"/> Previous
@@ -727,7 +760,6 @@ export default function QuizApp() {
                   <div style={{fontSize:13,color:"var(--t2)"}}>
                     Your answer: <span style={{color:"var(--err)",fontWeight:600}}>{w.yours}</span>{" · "}Correct: <span style={{color:"var(--ok)",fontWeight:600}}>{w.correct}</span>
                   </div>
-                  {w.explanation && <div style={{marginTop:8,fontSize:13,color:"var(--t3)",fontStyle:"italic"}}>{w.explanation}</div>}
                 </div>
               ))}
             </div>
@@ -843,7 +875,7 @@ export default function QuizApp() {
               {s.groups.map(g => (
                 <div key={g.id} className="agi">
                   <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>
-                    <span style={{fontSize:24}}>{g.icon}</span>
+                    {g.icon && (g.icon.startsWith("http")||g.icon.startsWith("data:")) ? <img src={g.icon} alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover"}}/> : <span style={{fontSize:24}}>{g.icon||"📝"}</span>}
                     <div><div style={{fontWeight:600}}>{g.name}</div><div style={{fontSize:12,color:"var(--t3)"}}>{(s.questions[g.id]||[]).length} questions</div></div>
                   </div>
                   <div style={{display:"flex",gap:4}}>
@@ -859,7 +891,22 @@ export default function QuizApp() {
           {s.adminTab === "add" && (
             <div className="c">
               <div style={{fontSize:18,fontFamily:"var(--fd)",fontWeight:600,marginBottom:20}}>Create New Group</div>
-              <div className="ig"><label className="lbl">Icon</label><input className="inp" value={gf.icon} onChange={e=>setGf(f=>({...f,icon:e.target.value}))} style={{width:80}}/></div>
+              <div className="ig">
+                <label className="lbl">Icon</label>
+                <div style={{display:"flex",alignItems:"center",gap:16}}>
+                  <div className="icon-up" onClick={()=>iconInputRef.current?.click()}>
+                    {gf.icon && (gf.icon.startsWith("http")||gf.icon.startsWith("data:")) ? <img src={gf.icon} alt=""/> : iconUploading ? <span style={{fontSize:12,color:"var(--t3)"}}>...</span> : <I.Img/>}
+                  </div>
+                  <input type="file" ref={iconInputRef} accept="image/*" style={{display:"none"}} onChange={(e)=>{
+                    const file = e.target.files?.[0]; e.target.value="";
+                    if(file) uploadIcon(file, (url)=>setGf(f=>({...f,icon:url})));
+                  }}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,color:"var(--t2)",marginBottom:8}}>Upload an image, or type an emoji below:</div>
+                    <input className="inp" value={gf.icon && !gf.icon.startsWith("http") ? gf.icon : ""} placeholder="📝" onChange={e=>setGf(f=>({...f,icon:e.target.value}))} style={{width:120}}/>
+                  </div>
+                </div>
+              </div>
               <div className="ig"><label className="lbl">Name</label><input className="inp" placeholder="e.g., Mathematics" value={gf.name} onChange={e=>setGf(f=>({...f,name:e.target.value}))}/></div>
               <div className="ig"><label className="lbl">Description</label><textarea className="ta" placeholder="Brief description..." value={gf.description} onChange={e=>setGf(f=>({...f,description:e.target.value}))}/></div>
               <button className="b bp" onClick={addGroup}><I.Plus/> Create Group</button>
@@ -876,8 +923,18 @@ export default function QuizApp() {
                 <button className="b bg bs" onClick={()=>set({adminTab:"groups",editGroup:null})} style={{marginBottom:16}}><I.Arr d="l"/> Back</button>
                 <div className="c" style={{marginBottom:24}}>
                   <div style={{fontSize:18,fontFamily:"var(--fd)",fontWeight:600,marginBottom:20}}>Edit: {g.name}</div>
-                  <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
-                    <div style={{width:80}}><label className="lbl">Icon</label><input className="inp" value={g.icon} onChange={e=>updGroup(g.id,{icon:e.target.value})}/></div>
+                  <div style={{display:"flex",gap:16,marginBottom:16,flexWrap:"wrap",alignItems:"flex-start"}}>
+                    <div>
+                      <label className="lbl">Icon</label>
+                      <div className="icon-up" onClick={()=>iconInputRef.current?.click()}>
+                        {g.icon && (g.icon.startsWith("http")||g.icon.startsWith("data:")) ? <img src={g.icon} alt=""/> : iconUploading ? <span style={{fontSize:12,color:"var(--t3)"}}>...</span> : <span style={{fontSize:28}}>{g.icon||"📝"}</span>}
+                      </div>
+                      <input type="file" ref={iconInputRef} accept="image/*" style={{display:"none"}} onChange={(e)=>{
+                        const file = e.target.files?.[0]; e.target.value="";
+                        if(file) uploadIcon(file, (url)=>updGroup(g.id,{icon:url}));
+                      }}/>
+                      <input className="inp" value={g.icon && !g.icon.startsWith("http") ? g.icon : ""} placeholder="📝" onChange={e=>updGroup(g.id,{icon:e.target.value})} style={{width:80,marginTop:8,textAlign:"center"}}/>
+                    </div>
                     <div style={{flex:1,minWidth:200}}><label className="lbl">Name</label><input className="inp" value={g.name} onChange={e=>updGroup(g.id,{name:e.target.value})}/></div>
                   </div>
                   <div className="ig"><label className="lbl">Description</label><textarea className="ta" value={g.description} onChange={e=>updGroup(g.id,{description:e.target.value})}/></div>
@@ -890,7 +947,7 @@ export default function QuizApp() {
                       <div style={{display:"flex",gap:4,flexShrink:0}}>
                         <button className="b bg bi bs" onClick={()=>{
                           const o = getOpts(q);
-                          setQf({text:q.text,options:[...o],correct:q.correct,explanation:q.explanation||""});
+                          setQf({text:q.text,options:[...o],correct:q.correct});
                           set({editQ:q.id,modal:{type:"edit-q",gid:g.id}});
                         }}><I.Edit/></button>
                         <button className="b bg bi bs bd" onClick={()=>delQ(q.id)}><I.Trash/></button>
@@ -911,14 +968,13 @@ export default function QuizApp() {
                       </div>
                     </div>
                   ))}
-                  <div className="ig"><label className="lbl">Explanation (optional)</label><textarea className="ta" placeholder="Why..." value={qf.explanation} onChange={e=>setQf(f=>({...f,explanation:e.target.value}))}/></div>
                   <button className="b bp" onClick={()=>addQ(g.id)}><I.Plus/> Add Question</button>
                 </div>
                 <div className="c" style={{marginBottom:24}}>
                   <div style={{fontSize:16,fontWeight:600,marginBottom:8,display:"flex",alignItems:"center",gap:8}}><I.File/> Import from Excel</div>
                   <p style={{fontSize:13,color:"var(--t2)",marginBottom:20,lineHeight:1.6}}>
                     Upload an Excel (.xlsx) or CSV file with your questions. The file should have these columns:
-                    <strong style={{color:"var(--t1)",display:"block",marginTop:8}}>Question | Option A | Option B | Option C | Option D | Correct | Explanation</strong>
+                    <strong style={{color:"var(--t1)",display:"block",marginTop:8}}>Question | Option A | Option B | Option C | Option D | Correct</strong>
                   </p>
                   <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginBottom:16}}>
                     <input type="file" ref={fileInputRef} accept=".xlsx,.xls,.csv" style={{display:"none"}}
@@ -930,17 +986,17 @@ export default function QuizApp() {
                   </div>
                   <div style={{padding:16,borderRadius:"var(--rs)",background:"var(--bg2)",border:"1px solid var(--bd)",fontSize:13,color:"var(--t3)",lineHeight:1.6}}>
                     <strong style={{color:"var(--t2)",display:"block",marginBottom:4}}>Tips:</strong>
-                    The "Correct" column should be A, B, C, or D. The "Explanation" column is optional.
+                    The "Correct" column should be A, B, C, or D.
                     Column headers are flexible — "Question", "Q", or "Text" all work. Same for options: "Option A", "A", etc.
                   </div>
                 </div>
                 <div className="c">
                   <div style={{fontSize:16,fontWeight:600,marginBottom:8}}>Text Import</div>
                   <p style={{fontSize:13,color:"var(--t2)",marginBottom:16,lineHeight:1.5}}>
-                    Or paste questions as text (7 lines each): Question → A. Option → B. Option → C. Option → D. Option → Answer letter → Explanation
+                    Or paste questions as text (6 lines each): Question → A. Option → B. Option → C. Option → D. Option → Answer letter
                   </p>
                   <textarea className="ta" style={{minHeight:140}} value={bulk} onChange={e=>setBulk(e.target.value)}
-                    placeholder={"What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6\nB\nTwo plus two equals four."}/>
+                    placeholder={"What is 2+2?\nA. 3\nB. 4\nC. 5\nD. 6\nB"}/>
                   <button className="b bp" style={{marginTop:12}} onClick={()=>importBulk(g.id)}><I.Upload/> Import Text</button>
                 </div>
               </div>
@@ -975,7 +1031,7 @@ export default function QuizApp() {
         </div></div>
       )}
       {s.modal?.type === "edit-q" && (
-        <div className="mo" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}><div className="md" onClick={e=>e.stopPropagation()}>
+        <div className="mo" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0});}}><div className="md" onClick={e=>e.stopPropagation()}>
           <div className="mt">Edit Question</div>
           <div className="ig"><label className="lbl">Question</label><textarea className="ta" value={qf.text} onChange={e=>setQf(f=>({...f,text:e.target.value}))}/></div>
           {qf.options.map((opt,i) => (
@@ -986,10 +1042,9 @@ export default function QuizApp() {
               </div>
             </div>
           ))}
-          <div className="ig"><label className="lbl">Explanation</label><textarea className="ta" value={qf.explanation} onChange={e=>setQf(f=>({...f,explanation:e.target.value}))}/></div>
           <div className="ma">
-            <button className="b" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}>Cancel</button>
-            <button className="b bp" onClick={()=>{updQ(s.editQ,{text:qf.text,options:qf.options,correct:qf.correct,explanation:qf.explanation});set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0,explanation:""});}}>Save</button>
+            <button className="b" onClick={()=>{set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0});}}>Cancel</button>
+            <button className="b bp" onClick={()=>{updQ(s.editQ,{text:qf.text,options:qf.options,correct:qf.correct});set({modal:null,editQ:null});setQf({text:"",options:["","","",""],correct:0});}}>Save</button>
           </div>
         </div></div>
       )}
@@ -1009,7 +1064,6 @@ export default function QuizApp() {
                     </div>
                   ))}
                 </div>
-                {q.explanation && <div style={{marginTop:4,fontSize:12,color:"var(--t3)",fontStyle:"italic"}}>{q.explanation}</div>}
               </div>
             ))}
           </div>
