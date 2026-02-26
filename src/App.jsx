@@ -513,6 +513,7 @@ export default function QuizApp() {
     a.href = url; a.download = "quiz_template.csv"; a.click();
     URL.revokeObjectURL(url);
   };
+  };
 
   // ─── Question Stats ───
   const getQStats = useCallback(async (gid) => {
@@ -538,7 +539,7 @@ export default function QuizApp() {
       {/* Nav */}
       {s.page !== "login" && s.page !== "pending" && (
         <nav className="nav">
-          <div className="logo" onClick={() => set({ page: "home" })}>QuizVault</div>
+          <div className="logo" onClick={() => set({ page: "home" })}>MohVault</div>
           <div className="nav-r">
             <button className="b bg bs" onClick={() => set({ page: "home" })}><I.Home /> Home</button>
             <button className="b bg bs" onClick={() => set({ page: "history" })}><I.Chart /> History</button>
@@ -559,7 +560,7 @@ export default function QuizApp() {
         <div className="lp">
           <div className="lc c" style={{animation:"si .4s ease",position:"relative"}}>
             <span style={{fontSize:48,display:"block",marginBottom:24}}>🧠</span>
-            <div className="st">QuizVault</div>
+            <div className="st">Mohammed Vault</div>
             <p style={{color:"var(--t2)",marginBottom:28,fontSize:14}}>Test your knowledge across multiple topics</p>
             <div style={{position:"absolute",top:16,right:16}}>
               <button className="b bg bi bs" onClick={toggleTheme}>{s.theme==="dark"?<I.Sun/>:<I.Moon/>}</button>
