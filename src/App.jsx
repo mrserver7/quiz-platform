@@ -513,7 +513,6 @@ export default function QuizApp() {
     a.href = url; a.download = "quiz_template.csv"; a.click();
     URL.revokeObjectURL(url);
   };
-  };
 
   // ─── Question Stats ───
   const getQStats = useCallback(async (gid) => {
