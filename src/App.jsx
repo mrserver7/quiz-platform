@@ -211,9 +211,18 @@ export default function QuizApp() {
   // ─── Data Loading ───
   const loadGroups = async () => {
     const { data: groups } = await supabase.from("groups").select("*").order("sort_order");
-    const { data: allQ } = await supabase.from("questions").select("*");
+    let allQ = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data } = await supabase.from("questions").select("*").range(from, from + pageSize - 1);
+      if (!data || data.length === 0) break;
+      allQ = allQ.concat(data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
     const qMap = {};
-    (allQ || []).forEach(q => {
+    allQ.forEach(q => {
       if (!qMap[q.group_id]) qMap[q.group_id] = [];
       qMap[q.group_id].push(q);
     });
