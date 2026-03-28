@@ -171,7 +171,7 @@ export default function QuizApp() {
   const [qf, setQf] = useState({ text: "", options: ["","","",""], correct: 0 });
   const [bulk, setBulk] = useState("");
   const [newPw, setNewPw] = useState("");
-  const letters = ["A","B","C","D"];
+  const letters = ["A","B","C","D","E"];
 
   // ─── Init: check session ───
   useEffect(() => {
